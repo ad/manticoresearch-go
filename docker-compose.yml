@@ -1,0 +1,36 @@
+services:
+  manticore:
+    image: manticoresearch/manticore
+    container_name: manticore-search
+    ports:
+      - "9306:9306"  # SQL port
+      - "9308:9308"  # HTTP port
+    volumes:
+      - manticore_data:/var/lib/manticore
+    environment:
+      - EXTRA=1
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h0 -P9306 -e 'SHOW TABLES;' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web-service:
+    build: .
+    container_name: manticore-web-service
+    ports:
+      - "8080:8080"
+    depends_on:
+      manticore:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - MANTICORE_HOST=manticore:9308
+      - PORT=8080
+      - DATA_DIR=/app/data
+    restart: unless-stopped
+
+volumes:
+  manticore_data:

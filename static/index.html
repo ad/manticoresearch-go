@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOOOOOGLE</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="title">
+                    <span class="icon">🔍</span>
+                    MOOOOOGLE
+                </h1>
+            </div>
+        </header>
+
+        <!-- Search Interface -->
+        <main class="main">
+            <div class="search-section">
+                <form class="search-form" id="searchForm">
+                    <div class="search-input-container">
+                        <input 
+                            type="text" 
+                            id="searchInput" 
+                            class="search-input" 
+                            placeholder="Введите поисковый запрос..."
+                            autocomplete="on"
+                        >
+                        <div class="search-loader" id="searchLoader">
+                            <div class="loader-spinner"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="search-controls">
+                        <select id="searchMode" class="search-mode-select">
+                            <option value="basic">Базовый поиск</option>
+                            <option value="fulltext">Полнотекстовый поиск</option>
+                            <option value="vector">Векторный поиск</option>
+                            <option value="hybrid">Гибридный поиск</option>
+                        </select>
+                        
+                        <button type="submit" class="search-button">
+                            <span class="button-text">Поиск</span>
+                            <span class="button-icon">→</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Status Bar -->
+            <div class="status-bar" id="statusBar">
+                <div class="status-item">
+                    <span class="status-label">Статус:</span>
+                    <span class="status-value" id="connectionStatus">Проверка...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Документов загружено:</span>
+                    <span class="status-value" id="documentsCount">-</span>
+                </div>
+            </div>
+
+            <!-- Search Results -->
+            <div class="results-section" id="resultsSection">
+                <!-- Results Info -->
+                <div class="results-info" id="resultsInfo" style="display: none;">
+                    <div class="results-meta">
+                        <span class="results-count" id="resultsCount">0 результатов</span>
+                        <span class="results-mode" id="resultsMode"></span>
+                    </div>
+                    <button class="reindex-button" id="reindexButton" title="Переиндексировать документы">
+                        <span class="reindex-icon">🔄</span>
+                        Переиндексировать
+                    </button>
+                </div>
+
+                <!-- Results List -->
+                <div class="results-list" id="resultsList">
+                    <!-- Results will be inserted here by JavaScript -->
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination" id="pagination" style="display: none;">
+                    <button class="pagination-button" id="prevButton" disabled>
+                        ← Предыдущая
+                    </button>
+                    <div class="pagination-info" id="paginationInfo">
+                        Страница 1 из 1
+                    </div>
+                    <button class="pagination-button" id="nextButton" disabled>
+                        Следующая →
+                    </button>
+                </div>
+
+                <!-- Empty State -->
+                <div class="empty-state" id="emptyState" style="display: none;">
+                    <div class="empty-icon">📝</div>
+                    <h3 class="empty-title">Результаты не найдены</h3>
+                    <p class="empty-message">Попробуйте изменить поисковый запрос или выбрать другой режим поиска.</p>
+                </div>
+
+                <!-- Initial State -->
+                <div class="initial-state" id="initialState">
+                    <div class="initial-icon">🚀</div>
+                    <h3 class="initial-title">Готов к поиску!</h3>
+                    <p class="initial-message">Введите поисковый запрос выше, чтобы найти релевантные документы.</p>
+                    <div class="features-grid">
+                        <div class="feature-card">
+                            <div class="feature-icon">📊</div>
+                            <h4 class="feature-title">Базовый поиск</h4>
+                            <p class="feature-desc">Простое текстовое совпадение</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🎯</div>
+                            <h4 class="feature-title">Полнотекстовый</h4>
+                            <p class="feature-desc">BM25 ранжирование и логические операторы</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🧠</div>
+                            <h4 class="feature-title">Векторный</h4>
+                            <p class="feature-desc">Семантический поиск похожих документов</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">⚡</div>
+                            <h4 class="feature-title">Гибридный</h4>
+                            <p class="feature-desc">Комбинация полнотекстового и векторного</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error State -->
+                <div class="error-state" id="errorState" style="display: none;">
+                    <div class="error-icon">⚠️</div>
+                    <h3 class="error-title">Ошибка поиска</h3>
+                    <p class="error-message" id="errorMessage">Произошла ошибка при выполнении поискового запроса.</p>
+                    <button class="retry-button" id="retryButton">Попробовать снова</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
