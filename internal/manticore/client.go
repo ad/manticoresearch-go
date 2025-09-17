@@ -16,9 +16,15 @@ import (
 	openapi "github.com/manticoresoftware/manticoresearch-go"
 )
 
-// retryOperation retries an operation with exponential backoff
+// retryOperation retries an operation with enhanced exponential backoff for network issues
 func retryOperation(operation func() error, maxAttempts int, baseDelay time.Duration) error {
 	var lastErr error
+
+	// Increase attempts for network-related operations
+	if maxAttempts < 5 {
+		maxAttempts = 5 // Minimum 5 attempts for network operations
+	}
+
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		err := operation()
 		if err == nil {
@@ -27,23 +33,77 @@ func retryOperation(operation func() error, maxAttempts int, baseDelay time.Dura
 
 		lastErr = err
 
+		// Enhanced error logging with detailed information
+		log.Printf("DETAILED ERROR (attempt %d/%d): %+v", attempt+1, maxAttempts, err)
+
+		// Try to extract more details from OpenAPI error
+		if openAPIErr, ok := err.(*openapi.GenericOpenAPIError); ok {
+			log.Printf("OpenAPI Error Body: %s\n", string(openAPIErr.Body()))
+			log.Printf("OpenAPI Error Model: %+v\n", openAPIErr.Model())
+		}
+
 		// Check if error is retryable
 		if !isRetryableError(err) {
+			log.Printf("Error is not retryable, stopping attempts")
 			break // Don't retry non-retryable errors
 		}
 
 		if attempt < maxAttempts-1 {
-			// Exponential backoff with jitter and longer delays for network issues
-			delay := baseDelay * time.Duration(1<<attempt)
-			if strings.Contains(err.Error(), "connection reset") || strings.Contains(err.Error(), "broken pipe") {
-				delay *= 2 // Longer delays for connection issues
-			}
-			jitter := time.Duration(rand.Intn(100)) * time.Millisecond
-			time.Sleep(delay + jitter)
-			log.Printf("Retrying operation (attempt %d/%d) after error: %v", attempt+2, maxAttempts, err)
+			// Progressive backoff with special handling for different error types
+			delay := calculateBackoffDelay(err, attempt, baseDelay)
+			jitter := time.Duration(rand.Intn(200)) * time.Millisecond // Increased jitter
+			totalDelay := delay + jitter
+
+			log.Printf("Retrying operation (attempt %d/%d) after %v delay due to error: %v", attempt+2, maxAttempts, totalDelay, err)
+			time.Sleep(totalDelay)
 		}
 	}
 	return fmt.Errorf("operation failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// retryOperationWithCircuitBreaker retries operation with circuit breaker protection
+func (mc *ManticoreClient) retryOperationWithCircuitBreaker(operation func() error, maxAttempts int, baseDelay time.Duration) error {
+	// Check circuit breaker before attempting operation
+	if !mc.circuitBreaker.shouldAllowRequest() {
+		return fmt.Errorf("circuit breaker is OPEN: too many consecutive failures")
+	}
+
+	err := retryOperation(operation, maxAttempts, baseDelay)
+
+	if err != nil {
+		mc.circuitBreaker.recordFailure()
+	} else {
+		mc.circuitBreaker.recordSuccess()
+	}
+
+	return err
+}
+
+// calculateBackoffDelay calculates progressive delay based on error type and attempt
+func calculateBackoffDelay(err error, attempt int, baseDelay time.Duration) time.Duration {
+	errStr := strings.ToLower(err.Error())
+
+	// Base exponential backoff
+	delay := baseDelay * time.Duration(1<<attempt)
+
+	// Special handling for different types of network errors
+	switch {
+	case strings.Contains(errStr, "connection reset"):
+		// Connection reset needs longer delays to allow network recovery
+		return delay * 3
+	case strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "closed network connection"):
+		// Broken pipe/closed connection - progressive increase
+		return delay * 2
+	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "i/o timeout"):
+		// Timeout errors - moderate increase
+		return delay * 2
+	case strings.Contains(errStr, "connection refused"):
+		// Service unavailable - aggressive backoff
+		return delay * 4
+	default:
+		// Standard exponential backoff for other errors
+		return delay
+	}
 }
 
 // isRetryableError determines if an error is worth retrying
@@ -65,6 +125,18 @@ func isRetryableError(err error) bool {
 		"network is unreachable",
 		"i/o timeout",
 		"eof",
+		"use of closed network connection",
+		"write: broken pipe",
+		"read: connection reset",
+		"context deadline exceeded",
+		"dial tcp", // General TCP dial issues
+		"no route to host",
+		"host is down",
+		"operation timed out",
+		"server closed idle connection",
+		"connection lost",
+		"readfrom tcp", // Docker networking issues
+		"write tcp",    // TCP write failures
 	}
 
 	for _, retryableErr := range retryableErrors {
@@ -76,10 +148,54 @@ func isRetryableError(err error) bool {
 	return false
 }
 
+// CircuitBreaker tracks connection health
+type CircuitBreaker struct {
+	consecutiveFailures int
+	lastFailureTime     time.Time
+	isOpen              bool
+}
+
+// recordFailure records a failure and potentially opens the circuit
+func (cb *CircuitBreaker) recordFailure() {
+	cb.consecutiveFailures++
+	cb.lastFailureTime = time.Now()
+
+	// Open circuit after 10 consecutive failures
+	if cb.consecutiveFailures >= 10 {
+		cb.isOpen = true
+		log.Printf("Circuit breaker OPEN: %d consecutive failures", cb.consecutiveFailures)
+	}
+}
+
+// recordSuccess resets the circuit breaker
+func (cb *CircuitBreaker) recordSuccess() {
+	if cb.consecutiveFailures > 0 {
+		log.Printf("Circuit breaker RESET: after %d failures", cb.consecutiveFailures)
+	}
+	cb.consecutiveFailures = 0
+	cb.isOpen = false
+}
+
+// shouldAllowRequest determines if request should be allowed
+func (cb *CircuitBreaker) shouldAllowRequest() bool {
+	if !cb.isOpen {
+		return true
+	}
+
+	// Allow request after 30 seconds to test if service recovered
+	if time.Since(cb.lastFailureTime) > 30*time.Second {
+		log.Printf("Circuit breaker: allowing test request after %v", time.Since(cb.lastFailureTime))
+		return true
+	}
+
+	return false
+}
+
 // ManticoreClient creates a new official Manticore client
 type ManticoreClient struct {
-	client *openapi.APIClient
-	ctx    context.Context
+	client         *openapi.APIClient
+	ctx            context.Context
+	circuitBreaker *CircuitBreaker
 }
 
 // NewClient creates a new Manticore client using official Go client
@@ -87,20 +203,25 @@ func NewClient(httpHost string) *ManticoreClient {
 	configuration := openapi.NewConfiguration()
 	configuration.Servers[0].URL = fmt.Sprintf("http://%s", httpHost)
 
-	// Set timeouts and connection settings
+	// Enhanced timeouts and connection settings for Docker environment
 	configuration.HTTPClient = &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second, // Increased from 30s for Docker network latency
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
+				Timeout:   15 * time.Second, // Increased from 10s
+				KeepAlive: 60 * time.Second, // Increased from 30s
 			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			MaxIdleConns:          10,
-			MaxIdleConnsPerHost:   2,
-			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   15 * time.Second, // Increased from 10s
+			ResponseHeaderTimeout: 20 * time.Second, // Increased from 10s
+			ExpectContinueTimeout: 2 * time.Second,  // Increased from 1s
+			MaxIdleConns:          20,               // Increased from 10
+			MaxIdleConnsPerHost:   10,               // Increased from 2 for better throughput
+			IdleConnTimeout:       90 * time.Second, // Increased from 30s
+			// Additional settings for connection stability
+			DisableCompression: false,
+			ForceAttemptHTTP2:  false, // Disable HTTP/2 for better compatibility
+			WriteBufferSize:    32768, // 32KB write buffer
+			ReadBufferSize:     32768, // 32KB read buffer
 		},
 	}
 
@@ -109,6 +230,10 @@ func NewClient(httpHost string) *ManticoreClient {
 	return &ManticoreClient{
 		client: client,
 		ctx:    context.Background(),
+		circuitBreaker: &CircuitBreaker{
+			consecutiveFailures: 0,
+			isOpen:              false,
+		},
 	}
 } // WaitForReady waits for Manticore to be ready with timeout
 func (mc *ManticoreClient) WaitForReady(timeout time.Duration) error {
@@ -199,14 +324,6 @@ func (mc *ManticoreClient) executeSQL(client *http.Client, baseURL, query string
 	return nil
 }
 
-// dropTablesHTTP drops existing tables using direct HTTP
-func (mc *ManticoreClient) dropTablesHTTP(client *http.Client, baseURL string) error {
-	_ = mc.executeSQL(client, baseURL, "DROP TABLE IF EXISTS documents")
-	_ = mc.executeSQL(client, baseURL, "DROP TABLE IF EXISTS documents_vector")
-	log.Println("Dropped existing tables")
-	return nil
-}
-
 // ResetDatabase drops existing tables to start fresh
 func (mc *ManticoreClient) ResetDatabase() error {
 	// Drop existing tables using SQL API
@@ -239,45 +356,63 @@ func (mc *ManticoreClient) TruncateTables() error {
 }
 
 // IndexDocument indexes a single document in both full-text and vector tables
+// For single documents, we use bulk operations with 1 document for consistency
 func (mc *ManticoreClient) IndexDocument(doc *models.Document, vector []float64) error {
-	// Index in full-text table using official API with retry
-	docData := map[string]interface{}{
-		"id":      doc.ID,
-		"title":   doc.Title,
-		"content": doc.Content,
-		"url":     doc.URL,
-	}
+	// Use bulk operations even for single document - more consistent and reliable
+	documents := []*models.Document{doc}
+	vectors := [][]float64{vector}
 
-	err := retryOperation(func() error {
-		insertReq := openapi.NewInsertDocumentRequest("documents", docData)
-		insertReq.SetId(uint64(doc.ID))
-		_, _, err := mc.client.IndexAPI.Insert(mc.ctx).InsertDocumentRequest(*insertReq).Execute()
-		return err
-	}, 2, 200*time.Millisecond)
+	log.Printf("Indexing single document %d (%s) using bulk operations", doc.ID, doc.Title)
 
+	// Index in full-text table
+	err := mc.bulkIndexDocuments(documents)
 	if err != nil {
-		return fmt.Errorf("failed to index document %d (%s) in full-text table: %v", doc.ID, doc.Title, err)
+		// Fallback to individual operation
+		log.Printf("Bulk indexing failed for document %d, using fallback", doc.ID)
+
+		docData := map[string]interface{}{
+			"title":   doc.Title,
+			"content": doc.Content,
+			"url":     doc.URL,
+		}
+
+		err = mc.retryOperationWithCircuitBreaker(func() error {
+			insertReq := openapi.NewInsertDocumentRequest("documents", docData)
+			insertReq.SetId(uint64(doc.ID))
+			_, _, err := mc.client.IndexAPI.Replace(mc.ctx).InsertDocumentRequest(*insertReq).Execute()
+			return err
+		}, 5, 500*time.Millisecond)
+
+		if err != nil {
+			return fmt.Errorf("failed to index document %d (%s) in full-text table: %v", doc.ID, doc.Title, err)
+		}
 	}
 
-	// Index in vector table with retry
-	vectorData := map[string]interface{}{
-		"id":          doc.ID,
-		"title":       doc.Title,
-		"url":         doc.URL,
-		"vector_data": formatVectorForManticore(vector),
-	}
-
-	err = retryOperation(func() error {
-		vectorInsertReq := openapi.NewInsertDocumentRequest("documents_vector", vectorData)
-		vectorInsertReq.SetId(uint64(doc.ID))
-		_, _, err := mc.client.IndexAPI.Insert(mc.ctx).InsertDocumentRequest(*vectorInsertReq).Execute()
-		return err
-	}, 2, 200*time.Millisecond)
-
+	// Index in vector table
+	err = mc.bulkIndexVectors(documents, vectors)
 	if err != nil {
-		return fmt.Errorf("failed to index document %d in vector table: %v", doc.ID, err)
+		// Fallback to individual operation
+		log.Printf("Bulk vector indexing failed for document %d, using fallback", doc.ID)
+
+		vectorData := map[string]interface{}{
+			"title":       doc.Title,
+			"url":         doc.URL,
+			"vector_data": formatVectorForManticore(vector),
+		}
+
+		err = mc.retryOperationWithCircuitBreaker(func() error {
+			vectorInsertReq := openapi.NewInsertDocumentRequest("documents_vector", vectorData)
+			vectorInsertReq.SetId(uint64(doc.ID))
+			_, _, err := mc.client.IndexAPI.Replace(mc.ctx).InsertDocumentRequest(*vectorInsertReq).Execute()
+			return err
+		}, 5, 500*time.Millisecond)
+
+		if err != nil {
+			return fmt.Errorf("failed to index document %d in vector table: %v", doc.ID, err)
+		}
 	}
 
+	log.Printf("Successfully indexed document %d (%s)", doc.ID, doc.Title)
 	return nil
 }
 
@@ -287,9 +422,13 @@ func (mc *ManticoreClient) IndexDocuments(documents []*models.Document, vectors 
 		return fmt.Errorf("documents and vectors count mismatch: %d vs %d", len(documents), len(vectors))
 	}
 
-	log.Printf("Starting to index %d documents using individual operations", len(documents))
+	log.Printf("Starting to index %d documents using bulk operations", len(documents))
 
-	const batchSize = 50 // Smaller batches for better reliability
+	const batchSize = 100 // Larger batches for bulk operations - more efficient
+
+	var lastError error
+	successfulBatches := 0
+	totalBatches := (len(documents) + batchSize - 1) / batchSize
 
 	// Process documents in batches using bulk operations
 	for batchStart := 0; batchStart < len(documents); batchStart += batchSize {
@@ -298,54 +437,91 @@ func (mc *ManticoreClient) IndexDocuments(documents []*models.Document, vectors 
 			batchEnd = len(documents)
 		}
 
-		log.Printf("Processing batch %d-%d of %d documents", batchStart+1, batchEnd, len(documents))
+		batchDocs := documents[batchStart:batchEnd]
+		batchVectors := vectors[batchStart:batchEnd]
 
-		// Index documents individually for better reliability
-		err := mc.indexDocumentsBatchIndividually(documents[batchStart:batchEnd], vectors[batchStart:batchEnd])
+		log.Printf("Processing batch %d/%d: documents %d-%d", successfulBatches+1, totalBatches, batchStart+1, batchEnd)
+
+		// Index documents in full-text table using bulk operation
+		err := mc.bulkIndexDocuments(batchDocs)
 		if err != nil {
-			log.Printf("Error: Failed to index batch %d-%d: %v", batchStart+1, batchEnd, err)
-			continue
+			log.Printf("Warning: Failed to bulk index documents batch %d-%d: %v", batchStart+1, batchEnd, err)
+			lastError = err
+
+			// Fallback to individual operations for this batch
+			log.Printf("Falling back to individual indexing for batch %d-%d", batchStart+1, batchEnd)
+			err = mc.indexDocumentsBatchIndividually(batchDocs, batchVectors)
+			if err != nil {
+				log.Printf("Error: Individual fallback also failed for batch %d-%d: %v", batchStart+1, batchEnd, err)
+				continue
+			}
+		} else {
+			// Index vectors in vector table using bulk operation
+			err = mc.bulkIndexVectors(batchDocs, batchVectors)
+			if err != nil {
+				log.Printf("Warning: Failed to bulk index vectors batch %d-%d: %v", batchStart+1, batchEnd, err)
+				lastError = err
+
+				// Try individual vector indexing as fallback
+				for i, doc := range batchDocs {
+					vectorData := map[string]interface{}{
+						"title":       doc.Title,
+						"url":         doc.URL,
+						"vector_data": formatVectorForManticore(batchVectors[i]),
+					}
+
+					err = mc.retryOperationWithCircuitBreaker(func() error {
+						vectorInsertReq := openapi.NewInsertDocumentRequest("documents_vector", vectorData)
+						vectorInsertReq.SetId(uint64(doc.ID))
+						_, _, err := mc.client.IndexAPI.Replace(mc.ctx).InsertDocumentRequest(*vectorInsertReq).Execute()
+						return err
+					}, 5, 500*time.Millisecond)
+
+					if err != nil {
+						log.Printf("Warning: Failed to index vector %d individually: %v", doc.ID, err)
+					}
+				}
+			}
 		}
 
-		log.Printf("Completed batch %d-%d", batchStart+1, batchEnd)
+		successfulBatches++
+		log.Printf("Completed batch %d/%d", successfulBatches, totalBatches)
 
-		// Small delay between batches
-		time.Sleep(50 * time.Millisecond)
+		// Small delay between batches to avoid overwhelming the server
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	log.Printf("Successfully indexed %d documents using individual operations", len(documents))
+	if lastError != nil {
+		log.Printf("Warning: Some batches failed during bulk indexing, last error: %v", lastError)
+	}
+
+	log.Printf("Successfully processed %d documents using bulk operations", len(documents))
 	return nil
 }
 
-// bulkIndexDocuments indexes multiple documents using bulk API
-func (mc *ManticoreClient) bulkIndexDocuments(documents []*models.Document, tableName string, isVector bool) error {
+// bulkIndexDocuments indexes multiple documents using bulk API for full-text table
+func (mc *ManticoreClient) bulkIndexDocuments(documents []*models.Document) error {
 	if len(documents) == 0 {
 		return nil
 	}
+
+	log.Printf("Starting bulk indexing of %d documents in 'documents' table", len(documents))
 
 	// Build NDJSON for bulk operation
 	ndjsonBuilder := strings.Builder{}
 
 	for _, doc := range documents {
 		// Build replace command for each document
-		var docData map[string]interface{}
-
-		if isVector {
-			// This shouldn't be called for vector table directly
-			return fmt.Errorf("bulkIndexDocuments should not be called for vector table")
-		} else {
-			docData = map[string]interface{}{
-				"id":      doc.ID,
-				"title":   doc.Title,
-				"content": doc.Content,
-				"url":     doc.URL,
-			}
+		docData := map[string]interface{}{
+			"title":   doc.Title,
+			"content": doc.Content,
+			"url":     doc.URL,
 		}
 
 		// Create replace operation in NDJSON format
 		replaceOp := map[string]interface{}{
 			"replace": map[string]interface{}{
-				"index": tableName,
+				"index": "documents",
 				"id":    doc.ID,
 				"doc":   docData,
 			},
@@ -360,8 +536,8 @@ func (mc *ManticoreClient) bulkIndexDocuments(documents []*models.Document, tabl
 		ndjsonBuilder.WriteByte('\n')
 	}
 
-	// Execute bulk operation with retry
-	return retryOperation(func() error {
+	// Execute bulk operation with enhanced retry and circuit breaker
+	return mc.retryOperationWithCircuitBreaker(func() error {
 		resp, _, err := mc.client.IndexAPI.Bulk(mc.ctx).Body(ndjsonBuilder.String()).Execute()
 		if err != nil {
 			return err
@@ -372,26 +548,28 @@ func (mc *ManticoreClient) bulkIndexDocuments(documents []*models.Document, tabl
 			return fmt.Errorf("bulk operation returned errors: %s", resp.GetError())
 		}
 
+		log.Printf("Successfully bulk indexed %d documents", len(documents))
 		return nil
-	}, 2, 300*time.Millisecond)
+	}, 5, 500*time.Millisecond)
 }
 
-// bulkIndexVectors indexes vectors using bulk API
-func (mc *ManticoreClient) bulkIndexVectors(documents []*models.Document, vectors [][]float64, tableName string) error {
+// bulkIndexVectors indexes vectors using bulk API for vector table
+func (mc *ManticoreClient) bulkIndexVectors(documents []*models.Document, vectors [][]float64) error {
 	if len(documents) == 0 || len(vectors) == 0 {
 		return nil
 	}
+
+	if len(documents) != len(vectors) {
+		return fmt.Errorf("documents and vectors count mismatch: %d vs %d", len(documents), len(vectors))
+	}
+
+	log.Printf("Starting bulk indexing of %d vectors in 'documents_vector' table", len(documents))
 
 	// Build NDJSON for bulk vector operation
 	ndjsonBuilder := strings.Builder{}
 
 	for i, doc := range documents {
-		if i >= len(vectors) {
-			break
-		}
-
 		vectorData := map[string]interface{}{
-			"id":          doc.ID,
 			"title":       doc.Title,
 			"url":         doc.URL,
 			"vector_data": formatVectorForManticore(vectors[i]),
@@ -400,7 +578,7 @@ func (mc *ManticoreClient) bulkIndexVectors(documents []*models.Document, vector
 		// Create replace operation in NDJSON format
 		replaceOp := map[string]interface{}{
 			"replace": map[string]interface{}{
-				"index": tableName,
+				"index": "documents_vector",
 				"id":    doc.ID,
 				"doc":   vectorData,
 			},
@@ -415,8 +593,8 @@ func (mc *ManticoreClient) bulkIndexVectors(documents []*models.Document, vector
 		ndjsonBuilder.WriteByte('\n')
 	}
 
-	// Execute bulk operation with retry
-	return retryOperation(func() error {
+	// Execute bulk operation with enhanced retry and circuit breaker
+	return mc.retryOperationWithCircuitBreaker(func() error {
 		resp, _, err := mc.client.IndexAPI.Bulk(mc.ctx).Body(ndjsonBuilder.String()).Execute()
 		if err != nil {
 			return err
@@ -427,8 +605,9 @@ func (mc *ManticoreClient) bulkIndexVectors(documents []*models.Document, vector
 			return fmt.Errorf("vector bulk operation returned errors: %s", resp.GetError())
 		}
 
+		log.Printf("Successfully bulk indexed %d vectors", len(documents))
 		return nil
-	}, 2, 300*time.Millisecond)
+	}, 5, 500*time.Millisecond)
 }
 
 // indexDocumentsBatchIndividually - fallback method for individual document indexing
@@ -436,7 +615,7 @@ func (mc *ManticoreClient) indexDocumentsBatchIndividually(documents []*models.D
 	for i, doc := range documents {
 		// Index in full-text table
 		docData := map[string]interface{}{
-			"id":      doc.ID,
+			// "id":      doc.ID,
 			"title":   doc.Title,
 			"content": doc.Content,
 			"url":     doc.URL,
@@ -445,9 +624,9 @@ func (mc *ManticoreClient) indexDocumentsBatchIndividually(documents []*models.D
 		err := retryOperation(func() error {
 			insertReq := openapi.NewInsertDocumentRequest("documents", docData)
 			insertReq.SetId(uint64(doc.ID))
-			_, _, err := mc.client.IndexAPI.Insert(mc.ctx).InsertDocumentRequest(*insertReq).Execute()
+			_, _, err := mc.client.IndexAPI.Replace(mc.ctx).InsertDocumentRequest(*insertReq).Execute()
 			return err
-		}, 2, 200*time.Millisecond)
+		}, 5, 500*time.Millisecond) // Increased attempts and base delay
 
 		if err != nil {
 			log.Printf("Warning: Failed to index document %d (%s) individually: %v", doc.ID, doc.Title, err)
@@ -457,7 +636,7 @@ func (mc *ManticoreClient) indexDocumentsBatchIndividually(documents []*models.D
 		// Index vector if available
 		if i < len(vectors) {
 			vectorData := map[string]interface{}{
-				"id":          doc.ID,
+				// "id":          doc.ID,
 				"title":       doc.Title,
 				"url":         doc.URL,
 				"vector_data": formatVectorForManticore(vectors[i]),
@@ -466,9 +645,9 @@ func (mc *ManticoreClient) indexDocumentsBatchIndividually(documents []*models.D
 			err = retryOperation(func() error {
 				vectorInsertReq := openapi.NewInsertDocumentRequest("documents_vector", vectorData)
 				vectorInsertReq.SetId(uint64(doc.ID))
-				_, _, err := mc.client.IndexAPI.Insert(mc.ctx).InsertDocumentRequest(*vectorInsertReq).Execute()
+				_, _, err := mc.client.IndexAPI.Replace(mc.ctx).InsertDocumentRequest(*vectorInsertReq).Execute()
 				return err
-			}, 2, 200*time.Millisecond)
+			}, 5, 500*time.Millisecond) // Increased attempts and base delay
 
 			if err != nil {
 				log.Printf("Warning: Failed to index vector %d individually: %v", doc.ID, err)

@@ -72,7 +72,9 @@ function debounce(func, wait) {
 
 function formatScore(score) {
     if (score === undefined || score === null) return '';
-    return (score * 100).toFixed(1) + '%';
+    // Manticore returns absolute scores, not 0-1 range
+    // Show score with 2 decimal places
+    return score.toFixed(2);
 }
 
 function truncateText(text, maxLength = 200) {
@@ -192,9 +194,14 @@ function renderResults(results) {
     
     showState('results');
     
+    // Calculate max score for normalization
+    const maxScore = Math.max(...results.map(r => r.score || 0));
+    
     elements.resultsList.innerHTML = results.map(result => {
-        const scoreDisplay = result.score ? 
-            `<div class="result-score">${formatScore(result.score)}</div>` : '';
+        const normalizedScore = result.score && maxScore > 0 ? 
+            ((result.score / maxScore) * 100).toFixed(1) + '%' : '';
+        const scoreDisplay = normalizedScore ? 
+            `<div class="result-score">${normalizedScore}</div>` : '';
         
         const contentDisplay = result.document && result.document.content ? 
             `<div class="result-content">${truncateText(result.document.content)}</div>` : '';

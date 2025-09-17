@@ -2,6 +2,8 @@ package document
 
 import (
 	"bufio"
+	"crypto/md5"
+	"encoding/binary"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,6 +12,16 @@ import (
 
 	"github.com/ad/manticoresearch-go/internal/models"
 )
+
+// generateDocumentID generates a consistent unique ID based on file path
+func generateDocumentID(filePath string) int {
+	// Use MD5 hash of file path for consistent ID generation
+	hash := md5.Sum([]byte(filePath))
+	// Convert first 4 bytes of hash to int (positive number)
+	id := binary.BigEndian.Uint32(hash[:4])
+	// Ensure positive int by using absolute value
+	return int(id & 0x7FFFFFFF)
+}
 
 // ParseMarkdownFile parses a single markdown file and extracts title, URL, and content
 func ParseMarkdownFile(filePath string) (*models.Document, error) {
@@ -61,9 +73,12 @@ func ParseMarkdownFile(filePath string) (*models.Document, error) {
 	// Join content lines
 	doc.Content = strings.TrimSpace(strings.Join(contentLines, "\n"))
 
-	// Validate required fields
-	if err := validateDocument(doc); err != nil {
-		return nil, fmt.Errorf("validation failed for %s: %w", filePath, err)
+	// Basic validation (URL will be validated later after it's set)
+	if doc.Title == "" {
+		return nil, fmt.Errorf("validation failed for %s: title is required", filePath)
+	}
+	if doc.Content == "" {
+		return nil, fmt.Errorf("validation failed for %s: content is required", filePath)
 	}
 
 	return doc, nil
@@ -86,7 +101,6 @@ func validateDocument(doc *models.Document) error {
 // ScanDataDirectory scans the ./data directory for markdown files and parses them
 func ScanDataDirectory(dataDir string) ([]*models.Document, error) {
 	var documents []*models.Document
-	var docID int = 1
 
 	err := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -105,8 +119,20 @@ func ScanDataDirectory(dataDir string) ([]*models.Document, error) {
 			return nil
 		}
 
-		doc.ID = docID
-		docID++
+		// Generate unique ID based on file path hash for consistency
+		doc.ID = generateDocumentID(path)
+
+		// Use file path as URL if not already set from document content
+		if doc.URL == "" {
+			doc.URL = path
+		}
+
+		// Final validation after URL is set
+		if err := validateDocument(doc); err != nil {
+			fmt.Printf("Warning: Document validation failed for %s: %v\n", path, err)
+			return nil
+		}
+
 		documents = append(documents, doc)
 
 		return nil

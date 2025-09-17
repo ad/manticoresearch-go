@@ -41,6 +41,9 @@ test:
 	@echo "Running tests..."
 	$(GOTEST) -v ./...
 
+up:
+	docker-compose down; docker-compose build web-service; docker-compose up -d; docker-compose logs -f web-service
+
 # Run the application
 run: build
 	@echo "Starting $(BINARY_NAME)..."

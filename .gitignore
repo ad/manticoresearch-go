@@ -1,3 +1,4 @@
 /data
-bin/manticore-search-tester
-manticore-search-tester
+/bin
+/manticore-search-tester
+/server

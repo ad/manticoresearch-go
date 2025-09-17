@@ -9,12 +9,18 @@ services:
       - manticore_data:/var/lib/manticore
     environment:
       - EXTRA=1
+    # Network optimizations for stability
+    sysctls:
+      - net.core.somaxconn=1024
+      - net.ipv4.tcp_keepalive_time=600
+      - net.ipv4.tcp_keepalive_intvl=60
+      - net.ipv4.tcp_keepalive_probes=3
     healthcheck:
       test: ["CMD-SHELL", "mysql -h0 -P9306 -e 'SHOW TABLES;' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      interval: 15s  # Increased from 10s
+      timeout: 10s   # Increased from 5s
+      retries: 10    # Increased from 5
+      start_period: 45s # Increased from 30s
 
   web-service:
     build: .
