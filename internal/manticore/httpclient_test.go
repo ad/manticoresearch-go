@@ -316,7 +316,7 @@ func TestCreateSchema(t *testing.T) {
 	config := DefaultHTTPClientConfig(server.URL)
 	client := NewHTTPClient(config)
 
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Errorf("Expected no error but got: %v", err)
 	}

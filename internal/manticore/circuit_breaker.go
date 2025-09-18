@@ -508,11 +508,11 @@ func (cb *CircuitBreaker) performMonitoringCheck() {
 	// Update current failure rate in stats
 	cb.stats.CurrentFailureRate = cb.calculateCurrentFailureRate()
 
-	// Log periodic status if there's activity
-	if cb.stats.TotalRequests > 0 {
-		log.Printf("Circuit breaker status: state=%s, failures=%d, successes=%d, failure_rate=%.2f%%",
-			cb.state, cb.stats.TotalFailures, cb.stats.TotalSuccesses, cb.stats.CurrentFailureRate*100)
-	}
+	// // Log periodic status if there's activity
+	// if cb.stats.TotalRequests > 0 {
+	// 	log.Printf("Circuit breaker status: state=%s, failures=%d, successes=%d, failure_rate=%.2f%%",
+	// 		cb.state, cb.stats.TotalFailures, cb.stats.TotalSuccesses, cb.stats.CurrentFailureRate*100)
+	// }
 }
 
 // Close gracefully shuts down the circuit breaker

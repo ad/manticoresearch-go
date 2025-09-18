@@ -13,6 +13,9 @@ type StatusResponse struct {
 	ManticoreHealthy bool   `json:"manticore_healthy"`
 	DocumentsLoaded  int    `json:"documents_loaded"`
 	VectorizerReady  bool   `json:"vectorizer_ready"`
+	AISearchEnabled  bool   `json:"ai_search_enabled"`
+	AIModel          string `json:"ai_model,omitempty"`
+	AISearchHealthy  bool   `json:"ai_search_healthy"`
 }
 
 // ReindexResponse represents the response for the reindex endpoint

@@ -1,20 +1,20 @@
 package manticore
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ad/manticoresearch-go/internal/models"
 )
 
 // Schema operations
 
-// executeSQL executes a SQL command using the /sql endpoint with comprehensive logging
+// executeSQL executes a SQL command using the /cli endpoint with comprehensive logging
 func (mc *manticoreHTTPClient) executeSQL(query string) error {
 	startTime := time.Now()
 	log.Printf("[SQL] Starting execution: %s", query)
@@ -22,23 +22,15 @@ func (mc *manticoreHTTPClient) executeSQL(query string) error {
 	operation := func(ctx context.Context) error {
 		requestStartTime := time.Now()
 
-		sqlRequest := SQLRequest{Query: query}
+		// Use /cli endpoint with form data instead of /sql with JSON
+		log.Printf("[SQL] [REQUEST] POST %s/cli - Query: %s", mc.baseURL, query)
 
-		reqBody, err := json.Marshal(sqlRequest)
-		if err != nil {
-			log.Printf("[SQL] [ERROR] Failed to marshal request for query '%s': %v", query, err)
-			return fmt.Errorf("failed to marshal SQL request: %v", err)
-		}
-
-		log.Printf("[SQL] [REQUEST] POST %s/sql - Body size: %d bytes", mc.baseURL, len(reqBody))
-		log.Printf("[SQL] [REQUEST] Payload: %s", string(reqBody))
-
-		req, err := http.NewRequestWithContext(ctx, "POST", mc.baseURL+"/sql", bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(ctx, "POST", mc.baseURL+"/cli", strings.NewReader(query))
 		if err != nil {
 			log.Printf("[SQL] [ERROR] Failed to create HTTP request for query '%s': %v", query, err)
 			return fmt.Errorf("failed to create SQL request: %v", err)
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 		resp, err := mc.httpClient.Do(req)
 		requestDuration := time.Since(requestStartTime)
@@ -65,27 +57,18 @@ func (mc *manticoreHTTPClient) executeSQL(query string) error {
 			return fmt.Errorf("SQL execution failed: HTTP %d, %s", resp.StatusCode, string(body))
 		}
 
-		// Parse response to check for SQL errors
-		var sqlResponse SQLResponse
-		if err := json.Unmarshal(body, &sqlResponse); err != nil {
-			// If we can't parse as JSON, check if it's a plain text response
-			if strings.Contains(string(body), "error") || strings.Contains(string(body), "ERROR") {
-				log.Printf("[SQL] [ERROR] SQL error in response for query '%s': %s", query, string(body))
-				return fmt.Errorf("SQL error: %s", string(body))
-			}
-			// Otherwise assume success for non-JSON responses
-			log.Printf("[SQL] [SUCCESS] Query executed successfully (non-JSON response): %s - Duration: %v", query, requestDuration)
-			return nil
+		// /cli endpoint returns plain text response, not JSON
+		bodyStr := string(body)
+
+		// Check for errors in the text response
+		if strings.Contains(bodyStr, "ERROR") || strings.Contains(bodyStr, "error") {
+			log.Printf("[SQL] [ERROR] SQL error in response for query '%s': %s", query, bodyStr)
+			return fmt.Errorf("SQL error: %s", bodyStr)
 		}
 
-		if sqlResponse.Error != "" {
-			log.Printf("[SQL] [ERROR] SQL error in parsed response for query '%s': %s", query, sqlResponse.Error)
-			return fmt.Errorf("SQL error: %s", sqlResponse.Error)
-		}
-
-		// Log successful execution with performance metrics
-		rowCount := len(sqlResponse.Data)
-		log.Printf("[SQL] [SUCCESS] Query executed successfully: %s - Duration: %v - Rows affected/returned: %d", query, requestDuration, rowCount)
+		// Log successful execution
+		log.Printf("[SQL] [SUCCESS] Query executed successfully: %s - Duration: %v", query, requestDuration)
+		log.Printf("[SQL] [SUCCESS] Response: %s", bodyStr)
 
 		return nil
 	}
@@ -118,37 +101,46 @@ func (mc *manticoreHTTPClient) executeSQL(query string) error {
 	return err
 }
 
-// CreateSchema creates the necessary tables for documents and vectors
-func (mc *manticoreHTTPClient) CreateSchema() error {
-	schemaStartTime := time.Now()
-	log.Printf("[SCHEMA] [CREATE] Starting schema creation using Manticore JSON API...")
+// CreateSchema creates the database schema for Manticore Search
+func (c *manticoreHTTPClient) CreateSchema(aiConfig *models.AISearchConfig) error {
+	log.Println("Creating Manticore Search schema...")
 
-	// Drop existing tables if they exist (ignore errors for first run)
-	log.Printf("[SCHEMA] [CREATE] Performing cleanup of existing tables...")
-	if err := mc.ResetDatabase(); err != nil {
-		log.Printf("[SCHEMA] [CREATE] [WARNING] Cleanup failed (this is normal for first run): %v", err)
+	// Drop existing tables first
+	tables := []string{"documents", "documents_basic", "documents_fulltext", "documents_vector", "documents_hybrid"}
+	for _, table := range tables {
+		dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS %s", table)
+		if err := c.executeSQL(dropQuery); err != nil {
+			log.Printf("Warning: Failed to drop table %s: %v", table, err)
+		}
 	}
 
-	// Create full-text search table
-	log.Printf("[SCHEMA] [CREATE] Creating full-text search table 'documents'...")
-	fullTextQuery := "CREATE TABLE documents (id bigint, title text, content text, url string)"
-	if err := mc.executeSQL(fullTextQuery); err != nil {
-		log.Printf("[SCHEMA] [CREATE] [ERROR] Failed to create documents table: %v", err)
+	// Determine AI model to use
+	aiModel := "sentence-transformers/all-MiniLM-L6-v2" // Default fallback
+	if aiConfig != nil && aiConfig.Model != "" {
+		aiModel = aiConfig.Model
+		log.Printf("Using configured AI model: %s", aiModel)
+	} else {
+		log.Printf("Using default AI model: %s", aiModel)
+	}
+
+	// Create unified documents table with Auto Embeddings using configurable model
+	createTableQuery := fmt.Sprintf(`
+		CREATE TABLE documents (
+			id BIGINT,
+			title TEXT,
+			content TEXT,
+			url TEXT,
+			embedding_field TEXT INDEXED ATTRIBUTE='{"model_name":"%s"}'
+		) ENGINE='columnar'`, aiModel)
+
+	log.Printf("Executing schema creation query: %s", createTableQuery)
+
+	if err := c.executeSQL(createTableQuery); err != nil {
+		log.Printf("Schema creation failed: %v", err)
 		return fmt.Errorf("failed to create documents table: %v", err)
 	}
-	log.Printf("[SCHEMA] [CREATE] [SUCCESS] Created full-text search table 'documents'")
 
-	// Create vector search table
-	log.Printf("[SCHEMA] [CREATE] Creating vector search table 'documents_vector'...")
-	vectorQuery := "CREATE TABLE documents_vector (id bigint, title string, url string, vector_data text)"
-	if err := mc.executeSQL(vectorQuery); err != nil {
-		log.Printf("[SCHEMA] [CREATE] [ERROR] Failed to create documents_vector table: %v", err)
-		return fmt.Errorf("failed to create documents_vector table: %v", err)
-	}
-	log.Printf("[SCHEMA] [CREATE] [SUCCESS] Created vector search table 'documents_vector'")
-
-	totalDuration := time.Since(schemaStartTime)
-	log.Printf("[SCHEMA] [CREATE] [FINAL] Schema creation completed successfully in %v", totalDuration)
+	log.Println("Schema creation completed successfully with AI model:", aiModel)
 	return nil
 }
 
@@ -162,6 +154,7 @@ func (mc *manticoreHTTPClient) ResetDatabase() error {
 		log.Printf("[SCHEMA] [RESET] [WARNING] Failed to drop documents table: %v", err)
 	}
 
+	// Also drop old documents_vector table if it exists (from previous schema)
 	dropVectors := "DROP TABLE IF EXISTS documents_vector"
 	if err := mc.executeSQL(dropVectors); err != nil {
 		log.Printf("[SCHEMA] [RESET] [WARNING] Failed to drop documents_vector table: %v", err)
@@ -175,16 +168,10 @@ func (mc *manticoreHTTPClient) ResetDatabase() error {
 func (mc *manticoreHTTPClient) TruncateTables() error {
 	log.Printf("[SCHEMA] [TRUNCATE] Starting table truncation...")
 
-	// Truncate documents table
+	// Truncate documents table (now includes auto-generated vectors)
 	truncateDocuments := "TRUNCATE TABLE documents"
 	if err := mc.executeSQL(truncateDocuments); err != nil {
 		log.Printf("[SCHEMA] [TRUNCATE] [WARNING] Failed to truncate documents table: %v", err)
-	}
-
-	// Truncate vectors table
-	truncateVectors := "TRUNCATE TABLE documents_vector"
-	if err := mc.executeSQL(truncateVectors); err != nil {
-		log.Printf("[SCHEMA] [TRUNCATE] [WARNING] Failed to truncate documents_vector table: %v", err)
 	}
 
 	log.Printf("[SCHEMA] [TRUNCATE] [SUCCESS] Table truncation completed")

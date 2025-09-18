@@ -75,7 +75,7 @@ func TestIntegrationSchemaOperations(t *testing.T) {
 	})
 
 	t.Run("create schema", func(t *testing.T) {
-		err := client.CreateSchema()
+		err := client.CreateSchema(nil)
 		if err != nil {
 			t.Errorf("CreateSchema failed: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestIntegrationSingleDocumentIndexing(t *testing.T) {
 	defer client.Close()
 
 	// Ensure clean state
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Fatalf("Failed to create schema: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestIntegrationBulkDocumentIndexing(t *testing.T) {
 	defer client.Close()
 
 	// Ensure clean state
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Fatalf("Failed to create schema: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestIntegrationSearchOperations(t *testing.T) {
 	defer client.Close()
 
 	// Setup test data
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Fatalf("Failed to create schema: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestIntegrationPerformance(t *testing.T) {
 	defer client.Close()
 
 	// Setup
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Fatalf("Failed to create schema: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestIntegrationCircuitBreakerRecovery(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		// Now try a valid request - should work and reset circuit breaker
-		err = client.CreateSchema()
+		err = client.CreateSchema(nil)
 		if err != nil {
 			t.Errorf("Expected successful request after recovery timeout: %v", err)
 		}
@@ -536,7 +536,7 @@ func TestIntegrationCompareWithOldImplementation(t *testing.T) {
 	defer client.Close()
 
 	// Setup test data
-	err := client.CreateSchema()
+	err := client.CreateSchema(nil)
 	if err != nil {
 		t.Fatalf("Failed to create schema: %v", err)
 	}

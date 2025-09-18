@@ -16,25 +16,15 @@ import (
 
 // Document indexing operations
 
-// IndexDocument indexes a single document in both full-text and vector tables
+// IndexDocument indexes a single document in unified table with Auto Embeddings
 func (mc *manticoreHTTPClient) IndexDocument(doc *models.Document, vector []float64) error {
 	startTime := time.Now()
-	log.Printf("[INDEX] [SINGLE] Starting document indexing: ID=%d, Title='%s'", doc.ID, doc.Title)
+	log.Printf("[INDEX] [SINGLE] Starting document indexing with Auto Embeddings: ID=%d, Title='%s'", doc.ID, doc.Title)
 
-	// Index in full-text table first
-	if err := mc.indexDocumentFullText(doc); err != nil {
-		log.Printf("[INDEX] [SINGLE] [ERROR] Failed to index document in full-text table after %v: %v", time.Since(startTime), err)
-		return fmt.Errorf("failed to index document in full-text table: %v", err)
-	}
-
-	// Index in vector table if vector data is provided
-	if len(vector) > 0 {
-		if err := mc.indexDocumentVector(doc, vector); err != nil {
-			log.Printf("[INDEX] [SINGLE] [ERROR] Failed to index document in vector table after %v: %v", time.Since(startTime), err)
-			return fmt.Errorf("failed to index document in vector table: %v", err)
-		}
-	} else {
-		log.Printf("[INDEX] [SINGLE] [WARNING] No vector data provided for document ID=%d, skipping vector indexing", doc.ID)
+	// Index in unified documents table (Auto Embeddings will generate vectors automatically)
+	if err := mc.indexDocumentUnified(doc); err != nil {
+		log.Printf("[INDEX] [SINGLE] [ERROR] Failed to index document in unified table after %v: %v", time.Since(startTime), err)
+		return fmt.Errorf("failed to index document with Auto Embeddings: %v", err)
 	}
 
 	totalDuration := time.Since(startTime)
@@ -49,16 +39,17 @@ func (mc *manticoreHTTPClient) IndexDocument(doc *models.Document, vector []floa
 		mc.logger.LogOperation("IndexDocument", totalDuration, true, fmt.Sprintf("ID=%d, Title='%s'", doc.ID, doc.Title))
 	}
 
-	log.Printf("[INDEX] [SINGLE] [SUCCESS] Document indexed successfully in %v: ID=%d", totalDuration, doc.ID)
+	log.Printf("[INDEX] [SINGLE] [SUCCESS] Document indexed successfully with Auto Embeddings in %v: ID=%d", totalDuration, doc.ID)
 	return nil
 }
 
-// indexDocumentFullText indexes a document in the full-text search table using /replace endpoint
-func (mc *manticoreHTTPClient) indexDocumentFullText(doc *models.Document) error {
+// indexDocumentUnified indexes a document in the unified table with Auto Embeddings using /replace endpoint
+func (mc *manticoreHTTPClient) indexDocumentUnified(doc *models.Document) error {
 	operation := func(ctx context.Context) error {
 		requestStartTime := time.Now()
 
-		// Create replace request for full-text table
+		// Create replace request for unified documents table with Auto Embeddings
+		// Note: content_vector field will be populated automatically by ManticoreSearch
 		replaceReq := ReplaceRequest{
 			Index: "documents",
 			ID:    int64(doc.ID),
@@ -66,21 +57,22 @@ func (mc *manticoreHTTPClient) indexDocumentFullText(doc *models.Document) error
 				"title":   doc.Title,
 				"content": doc.Content,
 				"url":     doc.URL,
+				// content_vector field is omitted - it will be generated automatically from title+content
 			},
 		}
 
 		reqBody, err := json.Marshal(replaceReq)
 		if err != nil {
-			log.Printf("[INDEX] [FULLTEXT] [ERROR] Failed to marshal replace request for doc ID=%d: %v", doc.ID, err)
+			log.Printf("[INDEX] [UNIFIED] [ERROR] Failed to marshal replace request for doc ID=%d: %v", doc.ID, err)
 			return fmt.Errorf("failed to marshal replace request: %v", err)
 		}
 
-		log.Printf("[INDEX] [FULLTEXT] [REQUEST] POST %s/replace - Doc ID=%d, Body size: %d bytes", mc.baseURL, doc.ID, len(reqBody))
-		log.Printf("[INDEX] [FULLTEXT] [REQUEST] Payload: %s", string(reqBody))
+		log.Printf("[INDEX] [UNIFIED] [REQUEST] POST %s/replace - Doc ID=%d, Body size: %d bytes (Auto Embeddings)", mc.baseURL, doc.ID, len(reqBody))
+		log.Printf("[INDEX] [UNIFIED] [REQUEST] Payload: %s", string(reqBody))
 
 		req, err := http.NewRequestWithContext(ctx, "POST", mc.baseURL+"/replace", bytes.NewReader(reqBody))
 		if err != nil {
-			log.Printf("[INDEX] [FULLTEXT] [ERROR] Failed to create HTTP request for doc ID=%d: %v", doc.ID, err)
+			log.Printf("[INDEX] [UNIFIED] [ERROR] Failed to create HTTP request for doc ID=%d: %v", doc.ID, err)
 			return fmt.Errorf("failed to create replace request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -89,26 +81,26 @@ func (mc *manticoreHTTPClient) indexDocumentFullText(doc *models.Document) error
 		requestDuration := time.Since(requestStartTime)
 
 		if err != nil {
-			log.Printf("[INDEX] [FULLTEXT] [ERROR] HTTP request failed for doc ID=%d after %v: %v", doc.ID, requestDuration, err)
+			log.Printf("[INDEX] [UNIFIED] [ERROR] HTTP request failed for doc ID=%d after %v: %v", doc.ID, requestDuration, err)
 			return fmt.Errorf("replace request failed: %v", err)
 		}
 		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("[INDEX] [FULLTEXT] [ERROR] Failed to read response body for doc ID=%d after %v: %v", doc.ID, requestDuration, err)
+			log.Printf("[INDEX] [UNIFIED] [ERROR] Failed to read response body for doc ID=%d after %v: %v", doc.ID, requestDuration, err)
 			return fmt.Errorf("failed to read replace response: %v", err)
 		}
 
-		log.Printf("[INDEX] [FULLTEXT] [RESPONSE] HTTP %d - Response size: %d bytes - Duration: %v", resp.StatusCode, len(body), requestDuration)
-		log.Printf("[INDEX] [FULLTEXT] [RESPONSE] Body: %s", string(body))
+		log.Printf("[INDEX] [UNIFIED] [RESPONSE] HTTP %d - Response size: %d bytes - Duration: %v", resp.StatusCode, len(body), requestDuration)
+		log.Printf("[INDEX] [UNIFIED] [RESPONSE] Body: %s", string(body))
 
 		if resp.StatusCode >= 400 {
-			log.Printf("[INDEX] [FULLTEXT] [ERROR] Replace operation failed for doc ID=%d: HTTP %d, %s", doc.ID, resp.StatusCode, string(body))
+			log.Printf("[INDEX] [UNIFIED] [ERROR] Replace operation failed for doc ID=%d: HTTP %d, %s", doc.ID, resp.StatusCode, string(body))
 			return fmt.Errorf("replace operation failed: HTTP %d, %s", resp.StatusCode, string(body))
 		}
 
-		log.Printf("[INDEX] [FULLTEXT] [SUCCESS] Document indexed in full-text table: ID=%d - Duration: %v", doc.ID, requestDuration)
+		log.Printf("[INDEX] [UNIFIED] [SUCCESS] Document indexed with Auto Embeddings: ID=%d - Duration: %v", doc.ID, requestDuration)
 		return nil
 	}
 
@@ -116,6 +108,13 @@ func (mc *manticoreHTTPClient) indexDocumentFullText(doc *models.Document) error
 	defer cancel()
 
 	return mc.circuitBreakerWithRetry.Execute(ctx, mc.baseURL+"/replace", "POST", operation)
+}
+
+// indexDocumentFullText indexes a document in the full-text search table using /replace endpoint
+// DEPRECATED: This function is kept for compatibility, but indexDocumentUnified should be used instead
+func (mc *manticoreHTTPClient) indexDocumentFullText(doc *models.Document) error {
+	log.Printf("[INDEX] [FULLTEXT] [DEPRECATED] Using deprecated indexDocumentFullText for doc ID=%d", doc.ID)
+	return mc.indexDocumentUnified(doc)
 }
 
 // indexDocumentVector indexes a document in the vector search table using /replace endpoint

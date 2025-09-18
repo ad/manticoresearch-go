@@ -36,7 +36,7 @@ func createBenchmarkClient(b *testing.B) ClientInterface {
 	}
 
 	// Setup schema
-	err = client.CreateSchema()
+	err = client.CreateSchema(nil)
 	if err != nil {
 		b.Fatalf("Failed to create schema: %v", err)
 	}
@@ -316,7 +316,7 @@ func BenchmarkCreateSchema(b *testing.B) {
 			b.Fatalf("Failed to connect: %v", err)
 		}
 
-		err = client.CreateSchema()
+		err = client.CreateSchema(nil)
 		if err != nil {
 			b.Fatalf("CreateSchema failed: %v", err)
 		}

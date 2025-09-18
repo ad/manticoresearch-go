@@ -143,5 +143,6 @@ func DefaultHTTPConfig(host string) *HTTPClientConfig {
 			RecoveryTimeout:  30 * time.Second,
 			HalfOpenMaxCalls: 3,
 		},
+		BulkConfig: DefaultBulkConfig(),
 	}
 }

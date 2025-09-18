@@ -15,7 +15,7 @@ type ClientInterface interface {
 	IsConnected() bool
 
 	// Schema operations
-	CreateSchema() error
+	CreateSchema(aiConfig *models.AISearchConfig) error
 	ResetDatabase() error
 	TruncateTables() error
 
@@ -29,6 +29,10 @@ type ClientInterface interface {
 
 	// HTTP-specific search operations
 	SearchWithRequest(request SearchRequest) (*SearchResponse, error)
+
+	// AI search operations
+	AISearch(query string, model string, limit, offset int) (*SearchResponse, error)
+	GenerateEmbedding(text string, model string) ([]float64, error)
 }
 
 // HTTPClientConfig holds configuration for the HTTP client
@@ -140,6 +144,25 @@ type BulkResponse struct {
 		} `json:"replace,omitempty"`
 	} `json:"items"`
 	Errors bool `json:"errors"`
+}
+
+// AI search request/response types
+type AISearchRequest struct {
+	Index  string                 `json:"index"`
+	Query  map[string]interface{} `json:"query"`
+	Limit  int                    `json:"limit,omitempty"`
+	Offset int                    `json:"offset,omitempty"`
+}
+
+type EmbeddingRequest struct {
+	Text  string `json:"text"`
+	Model string `json:"model"`
+}
+
+type EmbeddingResponse struct {
+	Embedding []float64 `json:"embedding"`
+	Model     string    `json:"model"`
+	Tokens    int       `json:"tokens,omitempty"`
 }
 
 // SearchResultProcessor handles search result processing and ranking

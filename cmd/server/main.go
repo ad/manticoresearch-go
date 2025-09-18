@@ -10,6 +10,7 @@ import (
 	"github.com/ad/manticoresearch-go/internal/document"
 	"github.com/ad/manticoresearch-go/internal/handlers"
 	"github.com/ad/manticoresearch-go/internal/manticore"
+	"github.com/ad/manticoresearch-go/internal/models"
 	"github.com/ad/manticoresearch-go/internal/vectorizer"
 )
 
@@ -132,8 +133,15 @@ func initializeDatabase(app *handlers.AppState) error {
 		log.Printf("Warning: Failed to reset database (this is normal for first run): %v", err)
 	}
 
-	// Create database schema using new client
-	if err := app.Manticore.CreateSchema(); err != nil {
+	// Load AI configuration for schema creation
+	aiConfig, err := models.LoadAISearchConfigFromEnvironment()
+	if err != nil {
+		log.Printf("Warning: Failed to load AI config, using default: %v", err)
+		aiConfig = models.DefaultAISearchConfig()
+	}
+
+	// Create database schema using new client with AI configuration
+	if err := app.Manticore.CreateSchema(aiConfig); err != nil {
 		return fmt.Errorf("failed to create schema: %v", err)
 	}
 

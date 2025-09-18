@@ -1,8 +1,6 @@
 package manticore
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -129,29 +127,15 @@ func (mc *manticoreHTTPClient) WaitForReady(timeout time.Duration) error {
 
 // HealthCheck verifies that the Manticore connection is healthy
 func (mc *manticoreHTTPClient) HealthCheck() error {
-	log.Printf("Performing health check on %s", mc.baseURL)
+	// log.Printf("Performing health check on %s", mc.baseURL)
 
-	// Create a simple search request to test connectivity
-	testRequest := SearchRequest{
-		Index: "test_health_check",
-		Query: map[string]interface{}{
-			"match_all": map[string]interface{}{},
-		},
-		Limit: 1,
-	}
-
-	reqBody, err := json.Marshal(testRequest)
-	if err != nil {
-		log.Printf("Health check failed: could not marshal test request: %v", err)
-		return fmt.Errorf("health check failed: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", mc.baseURL+"/search", bytes.NewReader(reqBody))
+	// Use a simple GET request to check if Manticore is responding
+	// This avoids creating unnecessary tables
+	req, err := http.NewRequest("GET", mc.baseURL, nil)
 	if err != nil {
 		log.Printf("Health check failed: could not create HTTP request: %v", err)
 		return fmt.Errorf("health check failed: %v", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	// Use a shorter timeout for health checks
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -162,14 +146,15 @@ func (mc *manticoreHTTPClient) HealthCheck() error {
 	}
 	defer resp.Body.Close()
 
-	// Accept both success responses and 400 responses (table not found is OK for health check)
+	// Accept any response that indicates Manticore is running
+	// Even 404 or 400 responses mean the server is up and responding
 	if resp.StatusCode >= 500 {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Health check failed: HTTP %d, %s", resp.StatusCode, string(body))
 		return fmt.Errorf("health check failed: HTTP %d", resp.StatusCode)
 	}
 
-	log.Printf("Health check passed: HTTP %d", resp.StatusCode)
+	// log.Printf("Health check passed: HTTP %d", resp.StatusCode)
 	return nil
 }
 

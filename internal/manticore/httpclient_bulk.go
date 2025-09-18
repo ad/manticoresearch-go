@@ -185,23 +185,16 @@ func (mc *manticoreHTTPClient) batchWorker(jobs <-chan batchJob, results chan<- 
 
 // bulkIndexDocuments performs bulk indexing using the /bulk endpoint with NDJSON format
 func (mc *manticoreHTTPClient) bulkIndexDocuments(documents []*models.Document, vectors [][]float64) error {
-	// Index full-text documents first
-	if err := mc.bulkIndexFullText(documents); err != nil {
-		return fmt.Errorf("bulk full-text indexing failed: %v", err)
-	}
-
-	// Index vectors if provided
-	if len(vectors) > 0 {
-		if err := mc.bulkIndexVectors(documents, vectors); err != nil {
-			return fmt.Errorf("bulk vector indexing failed: %v", err)
-		}
+	// Index documents in unified table with Auto Embeddings (vectors will be generated automatically)
+	if err := mc.bulkIndexUnified(documents); err != nil {
+		return fmt.Errorf("bulk unified indexing with Auto Embeddings failed: %v", err)
 	}
 
 	return nil
 }
 
-// bulkIndexFullText performs bulk indexing for full-text documents using NDJSON format
-func (mc *manticoreHTTPClient) bulkIndexFullText(documents []*models.Document) error {
+// bulkIndexUnified performs bulk indexing for documents with Auto Embeddings using NDJSON format
+func (mc *manticoreHTTPClient) bulkIndexUnified(documents []*models.Document) error {
 	if len(documents) == 0 {
 		return nil
 	}
@@ -233,8 +226,8 @@ func (mc *manticoreHTTPClient) bulkIndexFullText(documents []*models.Document) e
 		}
 
 		payload := ndjsonBuilder.String()
-		log.Printf("[INDEX] [BULK] [FULLTEXT] [REQUEST] POST %s/bulk - Documents: %d, Body size: %d bytes", mc.baseURL, len(documents), len(payload))
-		log.Printf("[INDEX] [BULK] [FULLTEXT] [REQUEST] Sample payload (first 500 chars): %s", truncateString(payload, 500))
+		log.Printf("[INDEX] [BULK] [UNIFIED] [REQUEST] POST %s/bulk - Documents: %d, Body size: %d bytes (Auto Embeddings)", mc.baseURL, len(documents), len(payload))
+		log.Printf("[INDEX] [BULK] [UNIFIED] [REQUEST] Sample payload (first 500 chars): %s", truncateString(payload, 500))
 
 		req, err := http.NewRequestWithContext(ctx, "POST", mc.baseURL+"/bulk", strings.NewReader(payload))
 		if err != nil {
@@ -246,22 +239,22 @@ func (mc *manticoreHTTPClient) bulkIndexFullText(documents []*models.Document) e
 		requestDuration := time.Since(requestStartTime)
 
 		if err != nil {
-			log.Printf("[INDEX] [BULK] [FULLTEXT] [ERROR] HTTP request failed after %v: %v", requestDuration, err)
+			log.Printf("[INDEX] [BULK] [UNIFIED] [ERROR] HTTP request failed after %v: %v", requestDuration, err)
 			return fmt.Errorf("bulk request failed: %v", err)
 		}
 		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("[INDEX] [BULK] [FULLTEXT] [ERROR] Failed to read response body after %v: %v", requestDuration, err)
+			log.Printf("[INDEX] [BULK] [UNIFIED] [ERROR] Failed to read response body after %v: %v", requestDuration, err)
 			return fmt.Errorf("failed to read bulk response: %v", err)
 		}
 
-		log.Printf("[INDEX] [BULK] [FULLTEXT] [RESPONSE] HTTP %d - Response size: %d bytes - Duration: %v", resp.StatusCode, len(body), requestDuration)
-		log.Printf("[INDEX] [BULK] [FULLTEXT] [RESPONSE] Body: %s", string(body))
+		log.Printf("[INDEX] [BULK] [UNIFIED] [RESPONSE] HTTP %d - Response size: %d bytes - Duration: %v", resp.StatusCode, len(body), requestDuration)
+		log.Printf("[INDEX] [BULK] [UNIFIED] [RESPONSE] Body: %s", string(body))
 
 		if resp.StatusCode >= 400 {
-			log.Printf("[INDEX] [BULK] [FULLTEXT] [ERROR] Bulk operation failed: HTTP %d, %s", resp.StatusCode, string(body))
+			log.Printf("[INDEX] [BULK] [UNIFIED] [ERROR] Bulk operation failed: HTTP %d, %s", resp.StatusCode, string(body))
 			return fmt.Errorf("bulk operation failed: HTTP %d, %s", resp.StatusCode, string(body))
 		}
 
@@ -273,17 +266,17 @@ func (mc *manticoreHTTPClient) bulkIndexFullText(documents []*models.Document) e
 				errorCount := 0
 				for i, item := range bulkResponse.Items {
 					if item.Replace != nil && item.Replace.Error != "" {
-						log.Printf("[INDEX] [BULK] [FULLTEXT] [ERROR] Item %d failed: %s", i, item.Replace.Error)
+						log.Printf("[INDEX] [BULK] [UNIFIED] [ERROR] Item %d failed: %s", i, item.Replace.Error)
 						errorCount++
 					}
 				}
 				if errorCount > 0 {
-					log.Printf("[INDEX] [BULK] [FULLTEXT] [WARNING] %d out of %d items had errors", errorCount, len(documents))
+					log.Printf("[INDEX] [BULK] [UNIFIED] [WARNING] %d out of %d items had errors", errorCount, len(documents))
 				}
 			}
 		}
 
-		log.Printf("[INDEX] [BULK] [FULLTEXT] [SUCCESS] Bulk indexing completed: %d documents - Duration: %v", len(documents), requestDuration)
+		log.Printf("[INDEX] [BULK] [UNIFIED] [SUCCESS] Bulk indexing with Auto Embeddings completed: %d documents - Duration: %v", len(documents), requestDuration)
 		return nil
 	}
 
@@ -418,6 +411,13 @@ func (mc *manticoreHTTPClient) fallbackToIndividualIndexing(documents []*models.
 
 	log.Printf("[INDEX] [FALLBACK] [FINAL] Individual indexing completed: %d/%d documents successful", successCount, len(documents))
 	return lastError
+}
+
+// bulkIndexFullText is a deprecated wrapper for bulkIndexUnified
+// DEPRECATED: Use bulkIndexUnified instead. This is kept for compatibility.
+func (mc *manticoreHTTPClient) bulkIndexFullText(documents []*models.Document) error {
+	log.Printf("[INDEX] [BULK] [FULLTEXT] [DEPRECATED] Using deprecated bulkIndexFullText, redirecting to bulkIndexUnified")
+	return mc.bulkIndexUnified(documents)
 }
 
 // truncateString truncates a string to the specified length

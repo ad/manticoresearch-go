@@ -25,6 +25,15 @@ type MetricsCollector struct {
 	operationTypes        map[string]int64
 	errorTypes            map[string]int64
 	responseTimeHistogram map[string][]time.Duration
+	// AI Search specific metrics
+	aiSearchOperations    int64
+	aiEmbeddingOperations int64
+	aiSearchSuccessCount  int64
+	aiSearchErrorCount    int64
+	aiSearchTotalDuration time.Duration
+	aiModelUsage          map[string]int64
+	aiSearchErrorTypes    map[string]int64
+	lastAISearchTime      time.Time
 }
 
 // NewMetricsCollector creates a new metrics collector
@@ -33,6 +42,8 @@ func NewMetricsCollector() *MetricsCollector {
 		operationTypes:        make(map[string]int64),
 		errorTypes:            make(map[string]int64),
 		responseTimeHistogram: make(map[string][]time.Duration),
+		aiModelUsage:          make(map[string]int64),
+		aiSearchErrorTypes:    make(map[string]int64),
 	}
 }
 
@@ -117,6 +128,43 @@ func (mc *MetricsCollector) RecordSchemaOperation() {
 	mc.schemaOperations++
 }
 
+// RecordAISearchOperation records an AI search operation with model and outcome
+func (mc *MetricsCollector) RecordAISearchOperation(model string, duration time.Duration, success bool, errorType string) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.aiSearchOperations++
+	mc.aiSearchTotalDuration += duration
+	mc.lastAISearchTime = time.Now()
+
+	// Track model usage
+	mc.aiModelUsage[model]++
+
+	if success {
+		mc.aiSearchSuccessCount++
+	} else {
+		mc.aiSearchErrorCount++
+		if errorType != "" {
+			mc.aiSearchErrorTypes[errorType]++
+		}
+	}
+}
+
+// RecordAIEmbeddingOperation records an AI embedding generation operation
+func (mc *MetricsCollector) RecordAIEmbeddingOperation(model string, duration time.Duration, success bool, errorType string) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	mc.aiEmbeddingOperations++
+
+	// Track model usage for embeddings
+	mc.aiModelUsage[model+"_embedding"]++
+
+	if !success && errorType != "" {
+		mc.aiSearchErrorTypes[errorType]++
+	}
+}
+
 // GetMetrics returns current metrics snapshot
 func (mc *MetricsCollector) GetMetrics() Metrics {
 	mc.mu.RLock()
@@ -153,6 +201,28 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		}
 	}
 
+	// Calculate AI search success rate and average time
+	aiSearchSuccessRate := 0.0
+	if mc.aiSearchOperations > 0 {
+		aiSearchSuccessRate = float64(mc.aiSearchSuccessCount) / float64(mc.aiSearchOperations) * 100
+	}
+
+	aiSearchAvgTime := time.Duration(0)
+	if mc.aiSearchOperations > 0 {
+		aiSearchAvgTime = mc.aiSearchTotalDuration / time.Duration(mc.aiSearchOperations)
+	}
+
+	// Copy AI search maps to avoid race conditions
+	aiModelUsage := make(map[string]int64)
+	for k, v := range mc.aiModelUsage {
+		aiModelUsage[k] = v
+	}
+
+	aiSearchErrorTypes := make(map[string]int64)
+	for k, v := range mc.aiSearchErrorTypes {
+		aiSearchErrorTypes[k] = v
+	}
+
 	return Metrics{
 		RequestCount:            mc.requestCount,
 		SuccessCount:            mc.successCount,
@@ -172,6 +242,17 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		OperationTypes:          operationTypes,
 		ErrorTypes:              errorTypes,
 		ResponseTimePercentiles: responseTimePercentiles,
+		// AI Search metrics
+		AISearchOperations:    mc.aiSearchOperations,
+		AIEmbeddingOperations: mc.aiEmbeddingOperations,
+		AISearchSuccessCount:  mc.aiSearchSuccessCount,
+		AISearchErrorCount:    mc.aiSearchErrorCount,
+		AISearchSuccessRate:   aiSearchSuccessRate,
+		AISearchAverageTime:   aiSearchAvgTime,
+		AISearchTotalDuration: mc.aiSearchTotalDuration,
+		AIModelUsage:          aiModelUsage,
+		AISearchErrorTypes:    aiSearchErrorTypes,
+		LastAISearchTime:      mc.lastAISearchTime,
 	}
 }
 
@@ -202,6 +283,33 @@ func (mc *MetricsCollector) LogMetrics() {
 
 	log.Printf("[METRICS] Operations: Search=%d, Index=%d, Schema=%d",
 		metrics.SearchOperations, metrics.IndexOperations, metrics.SchemaOperations)
+
+	// AI Search specific metrics
+	if metrics.AISearchOperations > 0 {
+		log.Printf("[METRICS] AI Search Operations: %d (Success: %d, Errors: %d)",
+			metrics.AISearchOperations, metrics.AISearchSuccessCount, metrics.AISearchErrorCount)
+		log.Printf("[METRICS] AI Search Success Rate: %.2f%%", metrics.AISearchSuccessRate)
+		log.Printf("[METRICS] AI Search Average Time: %v", metrics.AISearchAverageTime)
+		log.Printf("[METRICS] AI Embedding Operations: %d", metrics.AIEmbeddingOperations)
+
+		if !metrics.LastAISearchTime.IsZero() {
+			log.Printf("[METRICS] Last AI Search: %v", metrics.LastAISearchTime.Format(time.RFC3339))
+		}
+	}
+
+	if len(metrics.AIModelUsage) > 0 {
+		log.Printf("[METRICS] AI Model Usage:")
+		for model, count := range metrics.AIModelUsage {
+			log.Printf("[METRICS]   %s: %d", model, count)
+		}
+	}
+
+	if len(metrics.AISearchErrorTypes) > 0 {
+		log.Printf("[METRICS] AI Search Error Types:")
+		for errType, count := range metrics.AISearchErrorTypes {
+			log.Printf("[METRICS]   %s: %d", errType, count)
+		}
+	}
 
 	if len(metrics.OperationTypes) > 0 {
 		log.Printf("[METRICS] Operation Types:")
@@ -249,6 +357,17 @@ type Metrics struct {
 	OperationTypes          map[string]int64
 	ErrorTypes              map[string]int64
 	ResponseTimePercentiles map[string]ResponseTimePercentiles
+	// AI Search specific metrics
+	AISearchOperations    int64
+	AIEmbeddingOperations int64
+	AISearchSuccessCount  int64
+	AISearchErrorCount    int64
+	AISearchSuccessRate   float64
+	AISearchAverageTime   time.Duration
+	AISearchTotalDuration time.Duration
+	AIModelUsage          map[string]int64
+	AISearchErrorTypes    map[string]int64
+	LastAISearchTime      time.Time
 }
 
 // ResponseTimePercentiles represents response time percentiles for an operation
@@ -441,6 +560,48 @@ func (l *Logger) LogRetryAttempt(operation string, attempt int, maxAttempts int,
 func (l *Logger) LogBulkOperation(operation string, processed, total int, duration time.Duration) {
 	l.Info("Bulk %s progress: %d/%d documents processed in %v",
 		operation, processed, total, duration)
+}
+
+// LogAISearchOperation logs AI search operations with detailed metrics
+func (l *Logger) LogAISearchOperation(query string, model string, duration time.Duration, success bool, hitCount int, errorDetails string) {
+	if success {
+		l.Info("AI Search completed successfully: query='%s', model='%s', hits=%d, duration=%v",
+			query, model, hitCount, duration)
+	} else {
+		l.Error("AI Search failed: query='%s', model='%s', duration=%v, error=%s",
+			query, model, duration, errorDetails)
+	}
+}
+
+// LogAIEmbeddingOperation logs AI embedding generation operations
+func (l *Logger) LogAIEmbeddingOperation(textLength int, model string, duration time.Duration, success bool, vectorSize int, errorDetails string) {
+	if success {
+		l.Info("AI Embedding generated: text_length=%d, model='%s', vector_size=%d, duration=%v",
+			textLength, model, vectorSize, duration)
+	} else {
+		l.Error("AI Embedding generation failed: text_length=%d, model='%s', duration=%v, error=%s",
+			textLength, model, duration, errorDetails)
+	}
+}
+
+// LogAISearchHealthCheck logs AI search health check results
+func (l *Logger) LogAISearchHealthCheck(healthy bool, model string, duration time.Duration, errorDetails string) {
+	if healthy {
+		l.Info("AI Search health check passed: model='%s', duration=%v", model, duration)
+	} else {
+		l.Warn("AI Search health check failed: model='%s', duration=%v, error=%s", model, duration, errorDetails)
+	}
+}
+
+// LogAISearchFallback logs when AI search falls back to other modes
+func (l *Logger) LogAISearchFallback(originalQuery string, fallbackMode string, reason string, duration time.Duration) {
+	l.Warn("AI Search fallback activated: query='%s', fallback_mode='%s', reason='%s', duration=%v",
+		originalQuery, fallbackMode, reason, duration)
+}
+
+// LogAISearchConfiguration logs AI search configuration changes
+func (l *Logger) LogAISearchConfiguration(model string, enabled bool, timeout time.Duration) {
+	l.Info("AI Search configuration: model='%s', enabled=%t, timeout=%v", model, enabled, timeout)
 }
 
 // MetricsCircuitBreakerCallback implements CircuitBreakerCallback for metrics collection

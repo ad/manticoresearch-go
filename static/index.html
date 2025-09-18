@@ -44,12 +44,25 @@
                             <option value="fulltext">Полнотекстовый поиск</option>
                             <option value="vector">Векторный поиск</option>
                             <option value="hybrid">Гибридный поиск</option>
+                            <option value="ai">AI Search (Semantic)</option>
                         </select>
                         
                         <button type="submit" class="search-button">
                             <span class="button-text">Поиск</span>
                             <span class="button-icon">→</span>
                         </button>
+                    </div>
+                    
+                    <!-- AI Model Info -->
+                    <div class="ai-model-info" id="aiModelInfo" style="display: none;">
+                        <div class="ai-model-label">
+                            <span class="ai-model-icon">🤖</span>
+                            <span class="ai-model-text">AI Model: <span id="aiModelName">Loading...</span></span>
+                        </div>
+                        <div class="ai-model-status" id="aiModelStatus">
+                            <span class="status-indicator" id="aiStatusIndicator">⚪</span>
+                            <span id="aiStatusText">Checking...</span>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -64,6 +77,10 @@
                     <span class="status-label">Документов загружено:</span>
                     <span class="status-value" id="documentsCount">-</span>
                 </div>
+                <div class="status-item" id="aiStatusItem" style="display: none;">
+                    <span class="status-label">AI Search:</span>
+                    <span class="status-value" id="aiSearchStatus">-</span>
+                </div>
             </div>
 
             <!-- Search Results -->
@@ -73,6 +90,16 @@
                     <div class="results-meta">
                         <span class="results-count" id="resultsCount">0 результатов</span>
                         <span class="results-mode" id="resultsMode"></span>
+                        <div class="ai-results-info" id="aiResultsInfo" style="display: none;">
+                            <span class="ai-model-badge" id="aiModelBadge">
+                                <span class="ai-icon">🤖</span>
+                                <span id="aiModelInResults">AI Model</span>
+                            </span>
+                            <span class="ai-fallback-notice" id="aiFallbackNotice" style="display: none;">
+                                <span class="fallback-icon">⚠️</span>
+                                <span id="fallbackText">Fallback used</span>
+                            </span>
+                        </div>
                     </div>
                     <button class="reindex-button" id="reindexButton" title="Переиндексировать документы">
                         <span class="reindex-icon">🔄</span>
@@ -130,6 +157,11 @@
                             <div class="feature-icon">⚡</div>
                             <h4 class="feature-title">Гибридный</h4>
                             <p class="feature-desc">Комбинация полнотекстового и векторного</p>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🤖</div>
+                            <h4 class="feature-title">AI Search</h4>
+                            <p class="feature-desc">Семантический поиск с использованием ИИ</p>
                         </div>
                     </div>
                 </div>

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/ad/manticoresearch-go/internal/manticore"
 	"github.com/ad/manticoresearch-go/internal/models"
@@ -21,8 +22,10 @@ func ValidateSearchMode(modeStr string) (models.SearchMode, error) {
 		return models.SearchModeVector, nil
 	case "hybrid":
 		return models.SearchModeHybrid, nil
+	case "ai":
+		return models.SearchModeAI, nil
 	default:
-		return "", fmt.Errorf("invalid search mode: %s. Valid modes are: basic, fulltext, vector, hybrid", modeStr)
+		return "", fmt.Errorf("invalid search mode: %s. Valid modes are: basic, fulltext, vector, hybrid, ai", modeStr)
 	}
 }
 
@@ -31,14 +34,16 @@ type SearchEngine struct {
 	client        manticore.ClientInterface
 	searchAdapter *manticore.SearchAdapter
 	vectorizer    *vectorizer.TFIDFVectorizer
+	aiConfig      *models.AISearchConfig
 }
 
 // NewSearchEngine creates a new search engine with the Manticore client interface
-func NewSearchEngine(client manticore.ClientInterface, vectorizer *vectorizer.TFIDFVectorizer) *SearchEngine {
+func NewSearchEngine(client manticore.ClientInterface, vectorizer *vectorizer.TFIDFVectorizer, aiConfig *models.AISearchConfig) *SearchEngine {
 	return &SearchEngine{
 		client:        client,
 		searchAdapter: manticore.NewSearchAdapter(client),
 		vectorizer:    vectorizer,
+		aiConfig:      aiConfig,
 	}
 }
 
@@ -53,6 +58,8 @@ func (e *SearchEngine) Search(query string, mode models.SearchMode, page, pageSi
 		return e.VectorSearch(query, page, pageSize)
 	case models.SearchModeHybrid:
 		return e.HybridSearch(query, page, pageSize)
+	case models.SearchModeAI:
+		return e.AISearch(query, page, pageSize)
 	default:
 		return nil, fmt.Errorf("unknown search mode: %s", mode)
 	}
@@ -312,4 +319,137 @@ func getMaxScore(results []models.SearchResult) float64 {
 		}
 	}
 	return maxScore
+}
+
+// AISearch performs AI-powered semantic search using Manticore's AI search functionality
+func (e *SearchEngine) AISearch(query string, page, pageSize int) (*models.SearchResponse, error) {
+	startTime := time.Now()
+	log.Printf("AISearch: Starting AI search for query='%s', page=%d, pageSize=%d", query, page, pageSize)
+
+	// Check if AI search is enabled
+	if e.aiConfig == nil || !e.aiConfig.Enabled {
+		log.Printf("AISearch: AI search is disabled in configuration")
+		return nil, fmt.Errorf("AI search is disabled in configuration")
+	}
+
+	// Validate query
+	if query == "" {
+		log.Printf("AISearch: Empty query provided, returning empty results")
+		return &models.SearchResponse{
+			Documents: []models.SearchResult{},
+			Total:     0,
+			Page:      page,
+			Mode:      string(models.SearchModeAI),
+		}, nil
+	}
+
+	// Check client availability
+	if e.client == nil {
+		log.Printf("AISearch: Manticore client is not available")
+		return nil, fmt.Errorf("Manticore client is not available for AI search")
+	}
+
+	// Calculate offset for pagination
+	offset := (page - 1) * pageSize
+
+	// Use the configured AI model
+	model := e.aiConfig.Model
+	if model == "" {
+		model = "sentence-transformers/all-MiniLM-L6-v2" // Default fallback
+		log.Printf("AISearch: Using default AI model: %s", model)
+	} else {
+		log.Printf("AISearch: Using configured AI model: %s", model)
+	}
+
+	// Log AI search configuration for monitoring
+	log.Printf("AISearch: Configuration - Model: %s, Enabled: %t, Timeout: %v",
+		model, e.aiConfig.Enabled, e.aiConfig.Timeout)
+
+	// Perform AI search using the client
+	response, err := e.client.AISearch(query, model, pageSize, offset)
+	searchDuration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("AISearch: AI search request failed after %v: %v", searchDuration, err)
+		// Log detailed error information for monitoring
+		log.Printf("AISearch: Error details - Query: '%s', Model: '%s', Page: %d, PageSize: %d",
+			query, model, page, pageSize)
+		return nil, fmt.Errorf("AI search request failed: %w", err)
+	}
+
+	// Process AI search results
+	searchResults, err := e.processAISearchResults(response)
+	if err != nil {
+		log.Printf("AISearch: Failed to process AI search results after %v: %v", searchDuration, err)
+		return nil, fmt.Errorf("failed to process AI search results: %w", err)
+	}
+
+	totalDuration := time.Since(startTime)
+	resultCount := len(searchResults)
+
+	log.Printf("AISearch: Successfully completed AI search in %v - Query: '%s', Model: '%s', Results: %d/%d",
+		totalDuration, query, model, resultCount, int(response.Hits.Total))
+
+	// Log performance metrics for monitoring
+	log.Printf("AISearch: Performance - Search Duration: %v, Processing Duration: %v, Total Duration: %v",
+		searchDuration, totalDuration-searchDuration, totalDuration)
+
+	return &models.SearchResponse{
+		Documents: searchResults,
+		Total:     int(response.Hits.Total),
+		Page:      page,
+		Mode:      string(models.SearchModeAI),
+	}, nil
+}
+
+// processAISearchResults converts Manticore AI search response to SearchResult format
+func (e *SearchEngine) processAISearchResults(response *manticore.SearchResponse) ([]models.SearchResult, error) {
+	if response == nil || len(response.Hits.Hits) == 0 {
+		return []models.SearchResult{}, nil
+	}
+
+	results := make([]models.SearchResult, 0, len(response.Hits.Hits))
+
+	for _, hit := range response.Hits.Hits {
+		// Extract document information from the hit source
+		doc, err := e.extractDocumentFromHit(hit)
+		if err != nil {
+			log.Printf("AISearch: Failed to extract document from hit: %v", err)
+			continue
+		}
+
+		// Create search result with AI similarity score
+		result := models.SearchResult{
+			Document: doc,
+			Score:    float64(hit.Score),
+		}
+
+		results = append(results, result)
+	}
+
+	log.Printf("AISearch: Processed %d AI search results with scores", len(results))
+	return results, nil
+}
+
+// extractDocumentFromHit extracts document information from a Manticore search hit
+func (e *SearchEngine) extractDocumentFromHit(hit struct {
+	Index  string                 `json:"_index"`
+	ID     int64                  `json:"_id"`
+	Score  float32                `json:"_score"`
+	Source map[string]interface{} `json:"_source"`
+}) (*models.Document, error) {
+	// Extract document fields from source
+	title, _ := hit.Source["title"].(string)
+	content, _ := hit.Source["content"].(string)
+	url, _ := hit.Source["url"].(string)
+
+	// Create document
+	doc := &models.Document{
+		ID:      int(hit.ID),
+		Title:   title,
+		Content: content,
+		URL:     url,
+	}
+
+	return doc, nil
 }

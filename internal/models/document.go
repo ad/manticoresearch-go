@@ -1,5 +1,14 @@
 package models
 
+import "time"
+
+// AISearchConfig holds configuration for AI search functionality
+type AISearchConfig struct {
+	Model   string        `json:"model"`
+	Enabled bool          `json:"enabled"`
+	Timeout time.Duration `json:"timeout"`
+}
+
 // Document represents a parsed markdown document
 type Document struct {
 	ID      int    `json:"id"`
@@ -22,6 +31,15 @@ type SearchResponse struct {
 	Mode      string         `json:"mode"`
 }
 
+// AISearchResponse extends SearchResponse with AI-specific metadata
+type AISearchResponse struct {
+	SearchResponse
+	AIModel        string `json:"ai_model,omitempty"`
+	AIEnabled      bool   `json:"ai_enabled,omitempty"`
+	FallbackUsed   bool   `json:"fallback_used,omitempty"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
+}
+
 // SearchMode represents the different search modes available
 type SearchMode string
 
@@ -30,4 +48,5 @@ const (
 	SearchModeFullText SearchMode = "fulltext"
 	SearchModeVector   SearchMode = "vector"
 	SearchModeHybrid   SearchMode = "hybrid"
+	SearchModeAI       SearchMode = "ai"
 )

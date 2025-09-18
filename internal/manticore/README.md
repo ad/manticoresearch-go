@@ -108,7 +108,8 @@ err = client.CreateSchema()
 err = client.IndexDocuments(documents, vectors)
 
 // Поиск через адаптер
-searchEngine := search.NewSearchEngine(client, vectorizer)
+aiConfig := models.DefaultAISearchConfig()
+searchEngine := search.NewSearchEngine(client, vectorizer, aiConfig)
 results, err := searchEngine.Search("query", models.SearchModeHybrid, 1, 10)
 ```
 
