@@ -8,7 +8,6 @@ import (
 	"github.com/ad/manticoresearch-go/internal/manticore"
 	"github.com/ad/manticoresearch-go/internal/models"
 	"github.com/ad/manticoresearch-go/internal/vectorizer"
-	openapi "github.com/manticoresoftware/manticoresearch-go"
 )
 
 // ValidateSearchMode validates and returns the search mode
@@ -27,17 +26,19 @@ func ValidateSearchMode(modeStr string) (models.SearchMode, error) {
 	}
 }
 
-// SearchEngine handles all search operations using the official Manticore client
+// SearchEngine handles all search operations using the Manticore client interface
 type SearchEngine struct {
-	client     *manticore.ManticoreClient
-	vectorizer *vectorizer.TFIDFVectorizer
+	client        manticore.ClientInterface
+	searchAdapter *manticore.SearchAdapter
+	vectorizer    *vectorizer.TFIDFVectorizer
 }
 
-// NewSearchEngine creates a new search engine with the official Manticore client
-func NewSearchEngine(client *manticore.ManticoreClient, vectorizer *vectorizer.TFIDFVectorizer) *SearchEngine {
+// NewSearchEngine creates a new search engine with the Manticore client interface
+func NewSearchEngine(client manticore.ClientInterface, vectorizer *vectorizer.TFIDFVectorizer) *SearchEngine {
 	return &SearchEngine{
-		client:     client,
-		vectorizer: vectorizer,
+		client:        client,
+		searchAdapter: manticore.NewSearchAdapter(client),
+		vectorizer:    vectorizer,
 	}
 }
 
@@ -59,62 +60,12 @@ func (e *SearchEngine) Search(query string, mode models.SearchMode, page, pageSi
 
 // BasicSearch performs simple text matching
 func (e *SearchEngine) BasicSearch(query string, page, pageSize int) (*models.SearchResponse, error) {
-	log.Printf("BasicSearch: query='%s', page=%d, pageSize=%d", query, page, pageSize)
-
-	searchReq := openapi.NewSearchRequest("documents")
-
-	// Create a basic match query
-	searchQuery := openapi.NewSearchQuery()
-	matchQuery := map[string]interface{}{
-		"*": query,
-	}
-	searchQuery.SetMatch(matchQuery)
-	searchReq.SetQuery(*searchQuery)
-
-	// Set pagination
-	offset := int32((page - 1) * pageSize)
-	limit := int32(pageSize)
-	searchReq.SetOffset(offset)
-	searchReq.SetLimit(limit)
-
-	log.Printf("BasicSearch: executing search with offset=%d, limit=%d", offset, limit)
-
-	// Execute search
-	resp, _, err := e.client.GetClient().SearchAPI.Search(e.client.GetContext()).SearchRequest(*searchReq).Execute()
-	if err != nil {
-		log.Printf("BasicSearch: search failed: %v", err)
-		return nil, fmt.Errorf("basic search failed: %v", err)
-	}
-
-	log.Printf("BasicSearch: got response with %d hits", len(resp.Hits.Hits))
-	result, errConvertSearchResponse := e.convertSearchResponse(*resp, models.SearchModeBasic, page)
-	log.Printf("BasicSearch: returning %d results", len(result.Documents))
-
-	return result, errConvertSearchResponse
+	return e.searchAdapter.BasicSearch(query, page, pageSize)
 }
 
 // FullTextSearch performs full-text search with Manticore's query language
 func (e *SearchEngine) FullTextSearch(query string, page, pageSize int) (*models.SearchResponse, error) {
-	searchReq := openapi.NewSearchRequest("documents")
-
-	// Create a query string search
-	searchQuery := openapi.NewSearchQuery()
-	searchQuery.SetQueryString(query)
-	searchReq.SetQuery(*searchQuery)
-
-	// Set pagination
-	offset := int32((page - 1) * pageSize)
-	limit := int32(pageSize)
-	searchReq.SetOffset(offset)
-	searchReq.SetLimit(limit)
-
-	// Execute search
-	resp, _, err := e.client.GetClient().SearchAPI.Search(e.client.GetContext()).SearchRequest(*searchReq).Execute()
-	if err != nil {
-		return nil, fmt.Errorf("full-text search failed: %v", err)
-	}
-
-	return e.convertSearchResponse(*resp, models.SearchModeFullText, page)
+	return e.searchAdapter.FullTextSearch(query, page, pageSize)
 }
 
 // VectorSearch performs vector similarity search
@@ -229,131 +180,9 @@ func (e *SearchEngine) HybridSearch(query string, page, pageSize int) (*models.S
 	}, nil
 }
 
-// getAllDocuments retrieves all documents using official client
+// getAllDocuments retrieves all documents using client interface
 func (e *SearchEngine) getAllDocuments() ([]*models.Document, error) {
-	// Use search API to get all documents from the documents table
-	searchReq := openapi.NewSearchRequest("documents")
-
-	// Create a match_all query to get all documents
-	searchQuery := openapi.NewSearchQuery()
-	matchAll := map[string]interface{}{}
-	searchQuery.SetMatchAll(matchAll)
-	searchReq.SetQuery(*searchQuery)
-
-	// Set large limit to get all documents (adjust if needed)
-	searchReq.SetLimit(10000)
-
-	// Execute search
-	resp, _, err := e.client.GetClient().SearchAPI.Search(e.client.GetContext()).SearchRequest(*searchReq).Execute()
-	if err != nil {
-		return nil, fmt.Errorf("failed to query all documents: %v", err)
-	}
-
-	documents := make([]*models.Document, 0)
-
-	if resp.Hits != nil && resp.Hits.Hits != nil {
-		for _, hit := range resp.Hits.Hits {
-			doc := &models.Document{}
-
-			// Parse document fields from hit
-			// Parse ID from hit.Id (not from Source)
-			if hit.Id != nil {
-				doc.ID = int(*hit.Id)
-			}
-
-			if hit.Source != nil {
-				sourceMap := hit.Source
-
-				// Parse Title
-				if title, exists := sourceMap["title"]; exists {
-					if titleStr, ok := title.(string); ok {
-						doc.Title = titleStr
-					}
-				}
-
-				// Parse Content
-				if content, exists := sourceMap["content"]; exists {
-					if contentStr, ok := content.(string); ok {
-						doc.Content = contentStr
-					}
-				}
-
-				// Parse URL
-				if url, exists := sourceMap["url"]; exists {
-					if urlStr, ok := url.(string); ok {
-						doc.URL = urlStr
-					}
-				}
-			}
-
-			documents = append(documents, doc)
-		}
-	}
-
-	return documents, nil
-} // convertSearchResponse converts official API response to our format
-func (e *SearchEngine) convertSearchResponse(resp openapi.SearchResponse, mode models.SearchMode, page int) (*models.SearchResponse, error) {
-	results := make([]models.SearchResult, 0)
-
-	if resp.Hits != nil && resp.Hits.Hits != nil {
-		for _, hit := range resp.Hits.Hits {
-			doc := &models.Document{}
-
-			// Parse document fields from hit
-			// Parse ID from hit.Id (not from Source)
-			if hit.Id != nil {
-				doc.ID = int(*hit.Id)
-			}
-
-			if hit.Source != nil {
-				sourceMap := hit.Source
-
-				// Parse Title
-				if title, exists := sourceMap["title"]; exists {
-					if titleStr, ok := title.(string); ok {
-						doc.Title = titleStr
-					}
-				}
-
-				// Parse Content
-				if content, exists := sourceMap["content"]; exists {
-					if contentStr, ok := content.(string); ok {
-						doc.Content = contentStr
-					}
-				}
-
-				// Parse URL
-				if url, exists := sourceMap["url"]; exists {
-					if urlStr, ok := url.(string); ok {
-						doc.URL = urlStr
-					}
-				}
-			}
-
-			// Get score
-			score := 0.0
-			if hit.Score != nil {
-				score = float64(*hit.Score)
-			}
-
-			results = append(results, models.SearchResult{
-				Document: doc,
-				Score:    score,
-			})
-		}
-	}
-
-	total := 0
-	if resp.Hits != nil && resp.Hits.Total != nil {
-		total = int(*resp.Hits.Total)
-	}
-
-	return &models.SearchResponse{
-		Documents: results,
-		Total:     total,
-		Page:      page,
-		Mode:      string(mode),
-	}, nil
+	return e.searchAdapter.GetAllDocuments()
 }
 
 // normalizeScores normalizes scores to 0-1 range based on max score

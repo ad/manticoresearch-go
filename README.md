@@ -12,12 +12,12 @@ A Go application for testing and comparing different search approaches using Man
   - Vector search using TF-IDF vectors and cosine similarity
   - Hybrid search combining full-text and vector approaches
 - **TF-IDF Vectorization**: Custom implementation for semantic search
-- **Manticore Integration**: Direct SQL interface with Manticore Search
+- **Manticore Integration**: HTTP JSON API interface with Manticore Search
 - **Docker Support**: Easy setup with Docker Compose
 
 ## Prerequisites
 
-- Go 1.21 or higher
+- Go 1.23 or higher
 - Docker and Docker Compose (for Manticore Search)
 - Make (optional, for using Makefile commands)
 
@@ -198,9 +198,27 @@ Combines full-text and vector search:
 
 ### Environment Variables
 
-- `MANTICORE_HOST`: Manticore Search host (default: `localhost:9306`)
+#### Basic Configuration
+- `MANTICORE_HOST`: Manticore Search host (default: `localhost:9308`)
 - `DATA_DIR`: Directory containing markdown files (default: `./data`)
 - `PORT`: HTTP server port (default: `8080`)
+
+#### Manticore HTTP Client Configuration
+- `MANTICORE_HTTP_TIMEOUT`: HTTP request timeout (default: `60s`)
+- `MANTICORE_HTTP_MAX_IDLE_CONNS`: Maximum idle connections (default: `20`)
+- `MANTICORE_HTTP_MAX_IDLE_CONNS_PER_HOST`: Maximum idle connections per host (default: `10`)
+- `MANTICORE_HTTP_IDLE_CONN_TIMEOUT`: Idle connection timeout (default: `90s`)
+
+#### Retry Configuration
+- `MANTICORE_HTTP_RETRY_MAX_ATTEMPTS`: Maximum retry attempts (default: `5`)
+- `MANTICORE_HTTP_RETRY_BASE_DELAY`: Base retry delay (default: `500ms`)
+- `MANTICORE_HTTP_RETRY_MAX_DELAY`: Maximum retry delay (default: `30s`)
+- `MANTICORE_HTTP_RETRY_JITTER_PERCENT`: Retry jitter percentage (default: `0.1`)
+
+#### Circuit Breaker Configuration
+- `MANTICORE_HTTP_CB_FAILURE_THRESHOLD`: Circuit breaker failure threshold (default: `5`)
+- `MANTICORE_HTTP_CB_RECOVERY_TIMEOUT`: Circuit breaker recovery timeout (default: `30s`)
+- `MANTICORE_HTTP_CB_HALF_OPEN_MAX_CALLS`: Half-open state max calls (default: `3`)
 
 ### Document Format
 
@@ -260,6 +278,33 @@ The modular architecture makes it easy to extend:
 - **Add new vectorizers**: Implement new vectorization methods in `internal/vectorizer/`
 - **Add new document formats**: Extend `internal/document/parser.go`
 
+## HTTP Client Implementation
+
+This application uses a custom HTTP JSON API client implementation for Manticore Search. This approach provides several benefits over using third-party libraries:
+
+### Benefits of HTTP Client
+- **Better Control**: Direct control over HTTP requests, timeouts, and error handling
+- **Reduced Dependencies**: No longer depends on infrequently updated third-party libraries
+- **Simplified Architecture**: Removed factory pattern complexity, direct client creation
+- **Enhanced Resilience**: Built-in circuit breaker and retry mechanisms
+- **Improved Performance**: Optimized connection pooling and bulk operations
+- **Better Debugging**: Comprehensive logging of all HTTP operations
+
+### Key Features
+- **Circuit Breaker Pattern**: Automatic failure detection and recovery
+- **Exponential Backoff**: Smart retry logic with jitter for network resilience
+- **Connection Pooling**: Efficient HTTP connection management
+- **Bulk Operations**: Optimized batch processing using NDJSON format
+- **Comprehensive Logging**: Detailed request/response logging for troubleshooting
+
+### Implementation Features
+The HTTP client provides robust and efficient operations:
+- All search modes work reliably with comprehensive error handling
+- Optimized document indexing with intelligent bulk operations
+- Consistent API responses with detailed logging
+- Built-in resilience patterns (circuit breaker, exponential backoff retry)
+- Connection pooling and HTTP keep-alive for optimal performance
+
 ## Architecture
 
 ### Package Structure
@@ -295,7 +340,7 @@ Markdown Files → Document Parser → TF-IDF Vectorizer → Manticore Indexing
 
 1. **Connection refused**: Ensure Manticore Search is running (`make docker-up`)
 2. **No documents found**: Check the `./data` directory exists and contains `.md` files
-3. **Build errors**: Run `make deps` to install dependencies
+3. **Build errors**: Run `go mod download && go mod tidy` to install dependencies
 4. **Port conflicts**: Change the `PORT` environment variable
 
 ### Debugging
@@ -311,6 +356,52 @@ Check service status:
 curl "http://localhost:8080/api/status"
 ```
 
+### HTTP Client Troubleshooting
+
+#### Connection Issues
+If you're experiencing connection problems with Manticore Search:
+
+1. **Check Manticore is running on the correct port**:
+   ```bash
+   docker-compose ps
+   curl -X GET "http://localhost:9308/"
+   ```
+
+2. **Verify HTTP JSON API is enabled**:
+   The application uses Manticore's HTTP JSON API on port 9308 (not the MySQL protocol on port 9306).
+
+3. **Test API endpoints manually**:
+   ```bash
+   # Health check
+   curl -X GET "http://localhost:9308/"
+   
+   # Test search endpoint
+   curl -X POST "http://localhost:9308/search" \
+     -H "Content-Type: application/json" \
+     -d '{"index": "documents", "query": {"match_all": {}}}'
+   ```
+
+#### Circuit Breaker Issues
+If the circuit breaker is frequently opening:
+
+1. **Check failure threshold**: Lower `MANTICORE_HTTP_CB_FAILURE_THRESHOLD` if needed
+2. **Increase recovery timeout**: Set `MANTICORE_HTTP_CB_RECOVERY_TIMEOUT` to a higher value
+3. **Monitor logs**: Look for repeated connection failures
+
+#### Retry Configuration
+If requests are timing out or failing:
+
+1. **Increase timeout**: Set `MANTICORE_HTTP_TIMEOUT` to a higher value
+2. **Adjust retry attempts**: Increase `MANTICORE_HTTP_RETRY_MAX_ATTEMPTS`
+3. **Modify retry delays**: Adjust `MANTICORE_HTTP_RETRY_BASE_DELAY` and `MANTICORE_HTTP_RETRY_MAX_DELAY`
+
+#### Performance Tuning
+For better performance:
+
+1. **Connection pooling**: Increase `MANTICORE_HTTP_MAX_IDLE_CONNS` and `MANTICORE_HTTP_MAX_IDLE_CONNS_PER_HOST`
+2. **Keep-alive**: Increase `MANTICORE_HTTP_IDLE_CONN_TIMEOUT`
+3. **Bulk operations**: The client automatically uses bulk operations for better throughput
+
 ## Contributing
 
 1. Fork the repository
@@ -322,4 +413,4 @@ curl "http://localhost:8080/api/status"
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is provided as-is for educational and testing purposes.

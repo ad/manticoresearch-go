@@ -25,14 +25,14 @@ func main() {
 	// Initialize application state
 	app := handlers.NewAppState()
 
-	// Initialize Manticore client
-	manticoreHost := os.Getenv("MANTICORE_HOST")
-	if manticoreHost == "" {
-		manticoreHost = "localhost:9308"
+	// Initialize Manticore HTTP client from environment
+	client, err := manticore.NewClientFromEnvironment()
+	if err != nil {
+		log.Printf("Warning: Failed to create Manticore client: %v", err)
+		log.Println("API will still start, but search functionality may be limited")
+	} else {
+		app.Manticore = client
 	}
-
-	// Use the new official client
-	app.Manticore = manticore.NewClient(manticoreHost)
 
 	// Wait for Manticore to be ready and connect
 	log.Println("Waiting for Manticore Search to be ready...")

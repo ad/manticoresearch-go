@@ -22,7 +22,7 @@ import (
 type AppState struct {
 	Documents  []*models.Document
 	Vectorizer *vectorizer.TFIDFVectorizer
-	Manticore  *manticore.ManticoreClient // Official client
+	Manticore  manticore.ClientInterface // Client interface for both official and HTTP clients
 	Vectors    [][]float64
 }
 
