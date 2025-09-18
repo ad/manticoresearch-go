@@ -11,10 +11,14 @@ import (
 func LoadAISearchConfigFromEnvironment() (*AISearchConfig, error) {
 	config := DefaultAISearchConfig()
 
-	// Parse AI model configuration
-	if model := os.Getenv("MANTICORE_AI_MODEL"); model != "" {
+	// Parse AI model configuration - support both environment variables
+	model := os.Getenv("AI_SEARCH_MODEL")
+	if model == "" {
+		model = os.Getenv("MANTICORE_AI_MODEL")
+	}
+	if model != "" {
 		if err := validateAIModel(model); err != nil {
-			return nil, fmt.Errorf("invalid MANTICORE_AI_MODEL: %w", err)
+			return nil, fmt.Errorf("invalid AI model configuration: %w", err)
 		}
 		config.Model = model
 	}

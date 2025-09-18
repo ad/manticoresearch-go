@@ -37,6 +37,11 @@ func NewAppState() *AppState {
 		aiConfig = models.DefaultAISearchConfig()
 	}
 
+	return NewAppStateWithConfig(aiConfig)
+}
+
+// NewAppStateWithConfig creates a new application state with the provided AI configuration
+func NewAppStateWithConfig(aiConfig *models.AISearchConfig) *AppState {
 	return &AppState{
 		Documents:  make([]*models.Document, 0),
 		Vectorizer: nil,
@@ -319,15 +324,8 @@ func (app *AppState) ReindexHandler(w http.ResponseWriter, r *http.Request) {
 	vec := vectorizer.NewTFIDFVectorizer()
 	vectors := vec.FitTransform(documents)
 
-	// Load AI configuration for schema creation
-	aiConfig, err := models.LoadAISearchConfigFromEnvironment()
-	if err != nil {
-		log.Printf("Warning: Failed to load AI config, using default: %v", err)
-		aiConfig = models.DefaultAISearchConfig()
-	}
-
-	// Reset and recreate database schema with AI configuration
-	if err := app.Manticore.CreateSchema(aiConfig); err != nil {
+	// Reset and recreate database schema with AI configuration from app state
+	if err := app.Manticore.CreateSchema(app.AIConfig); err != nil {
 		log.Printf("Failed to create schema: %v", err)
 		app.sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create database schema: %v", err))
 		return

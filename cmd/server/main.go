@@ -23,8 +23,16 @@ func main() {
 		return
 	}
 
-	// Initialize application state
-	app := handlers.NewAppState()
+	// Load AI configuration first
+	aiConfig, err := models.LoadAISearchConfigFromEnvironment()
+	if err != nil {
+		log.Printf("Warning: Failed to load AI search configuration: %v", err)
+		log.Println("Falling back to default AI search configuration")
+		aiConfig = models.DefaultAISearchConfig()
+	}
+
+	// Initialize application state with AI configuration
+	app := handlers.NewAppStateWithConfig(aiConfig)
 
 	// Initialize Manticore HTTP client from environment
 	client, err := manticore.NewClientFromEnvironment()
@@ -133,15 +141,8 @@ func initializeDatabase(app *handlers.AppState) error {
 		log.Printf("Warning: Failed to reset database (this is normal for first run): %v", err)
 	}
 
-	// Load AI configuration for schema creation
-	aiConfig, err := models.LoadAISearchConfigFromEnvironment()
-	if err != nil {
-		log.Printf("Warning: Failed to load AI config, using default: %v", err)
-		aiConfig = models.DefaultAISearchConfig()
-	}
-
-	// Create database schema using new client with AI configuration
-	if err := app.Manticore.CreateSchema(aiConfig); err != nil {
+	// Create database schema using AI configuration from app state
+	if err := app.Manticore.CreateSchema(app.AIConfig); err != nil {
 		return fmt.Errorf("failed to create schema: %v", err)
 	}
 
@@ -163,9 +164,16 @@ func initializeDatabase(app *handlers.AppState) error {
 func runAPITests() {
 	fmt.Println("Running API endpoint tests...")
 
+	// Load AI configuration for tests
+	aiConfig, err := models.LoadAISearchConfigFromEnvironment()
+	if err != nil {
+		log.Printf("Warning: Failed to load AI config for tests, using default: %v", err)
+		aiConfig = models.DefaultAISearchConfig()
+	}
+
 	// Test search endpoint
 	fmt.Println("\n1. Testing search endpoint...")
-	app := handlers.NewAppState()
+	app := handlers.NewAppStateWithConfig(aiConfig)
 
 	// Load test documents
 	documents, err := document.ScanDataDirectory("data")
