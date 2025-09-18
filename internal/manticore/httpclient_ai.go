@@ -8,10 +8,87 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"time"
+
+	"github.com/ad/manticoresearch-go/internal/models"
+	"github.com/ad/manticoresearch-go/internal/vectorizer"
 )
 
 // AI Search operations
+
+// AISearchFallback performs AI search using TF-IDF vectors as fallback when Auto Embeddings fails
+func (mc *manticoreHTTPClient) AISearchFallback(query string, model string, limit int, vec interface{}) ([]*models.Document, []float64, error) {
+	startTime := time.Now()
+	log.Printf("[AI_SEARCH] [FALLBACK] Starting AI search fallback using TF-IDF vectors: query='%s', limit=%d", query, limit)
+
+	// Use the same logic as SearchVectorFallback but for AI search
+	documents, vectors, err := mc.GetAllDocumentsWithVectors()
+	if err != nil {
+		log.Printf("[AI_SEARCH] [FALLBACK] [ERROR] Failed to get documents with vectors: %v", err)
+		return nil, nil, fmt.Errorf("failed to get documents with vectors: %v", err)
+	}
+
+	if len(documents) == 0 {
+		log.Printf("[AI_SEARCH] [FALLBACK] [WARNING] No documents found")
+		return []*models.Document{}, []float64{}, nil
+	}
+
+	// Transform query to vector using TF-IDF vectorizer
+	var queryVec []float64
+	if tfidfVectorizer, ok := vec.(*vectorizer.TFIDFVectorizer); ok {
+		queryVec = tfidfVectorizer.TransformQuery(query)
+		log.Printf("[AI_SEARCH] [FALLBACK] Query vectorized with TF-IDF: vector size=%d", len(queryVec))
+	} else {
+		return nil, nil, fmt.Errorf("invalid vectorizer type for AI search fallback")
+	}
+
+	if len(queryVec) == 0 {
+		log.Printf("[AI_SEARCH] [FALLBACK] [WARNING] Query vector is empty")
+		return []*models.Document{}, []float64{}, nil
+	}
+
+	log.Printf("[AI_SEARCH] [FALLBACK] Computing similarity for %d documents", len(documents))
+
+	// Compute similarities using TF-IDF vectors
+	type docSimilarity struct {
+		document   *models.Document
+		similarity float64
+	}
+
+	similarities := make([]docSimilarity, 0, len(documents))
+	for i, doc := range documents {
+		if i < len(vectors) {
+			similarity := vectorizer.CosineSimilarity(queryVec, vectors[i])
+			similarities = append(similarities, docSimilarity{
+				document:   doc,
+				similarity: similarity,
+			})
+		}
+	}
+
+	// Sort by similarity (descending)
+	sort.Slice(similarities, func(i, j int) bool {
+		return similarities[i].similarity > similarities[j].similarity
+	})
+
+	// Take top results
+	if limit > len(similarities) {
+		limit = len(similarities)
+	}
+
+	resultDocs := make([]*models.Document, limit)
+	resultScores := make([]float64, limit)
+	for i := 0; i < limit; i++ {
+		resultDocs[i] = similarities[i].document
+		resultScores[i] = similarities[i].similarity
+	}
+
+	totalDuration := time.Since(startTime)
+	log.Printf("[AI_SEARCH] [FALLBACK] [SUCCESS] AI search fallback completed in %v: %d results", totalDuration, len(resultDocs))
+
+	return resultDocs, resultScores, nil
+}
 
 // AISearch performs AI-powered semantic search using Manticore's Auto Embeddings functionality
 func (mc *manticoreHTTPClient) AISearch(query string, model string, limit, offset int) (*SearchResponse, error) {
@@ -169,11 +246,11 @@ func (mc *manticoreHTTPClient) CreateAutoEmbeddingSearchRequest(index string, ve
 	log.Printf("[AI_SEARCH] [AUTO_EMBEDDING] Creating Auto Embedding search request: field='%s', query='%s', limit=%d, offset=%d",
 		vectorField, queryText, limit, offset)
 
-	// Create KNN query with text query (Auto Embeddings will generate vectors automatically)
+	// Create KNN query with text query for Auto Embeddings (Manticore 13.11+)
 	searchQuery := map[string]interface{}{
 		"knn": map[string]interface{}{
 			"field": vectorField,
-			"query": queryText, // Use text query instead of query_vector
+			"query": queryText, // Text query for Auto Embeddings
 			"k":     limit,
 		},
 	}

@@ -41,8 +41,22 @@ test:
 	@echo "Running tests..."
 	$(GOTEST) -v ./...
 
-up:
-	docker-compose down; docker-compose build web-service; docker-compose up -d; docker-compose logs -f web-service
+# Docker shortcuts
+up: docker-rebuild docker-test
+	@echo "Application is ready! Visit http://localhost:8080"
+
+up-logs: docker-rebuild
+	@echo "Starting with logs..."
+	docker-compose logs -f web-service
+
+down: docker-down
+
+logs: docker-logs
+
+restart:
+	@echo "Restarting services..."
+	docker-compose restart
+	@$(MAKE) docker-test
 
 # Run the application
 run: build

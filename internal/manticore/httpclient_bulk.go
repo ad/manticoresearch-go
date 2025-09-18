@@ -190,6 +190,14 @@ func (mc *manticoreHTTPClient) bulkIndexDocuments(documents []*models.Document, 
 		return fmt.Errorf("bulk unified indexing with Auto Embeddings failed: %v", err)
 	}
 
+	// Also index documents with TF-IDF vectors in documents_vector table (if vectors provided)
+	if len(vectors) > 0 {
+		if err := mc.bulkIndexVectors(documents, vectors); err != nil {
+			log.Printf("[INDEX] [BULK] [WARNING] Vector indexing failed, but unified indexing succeeded: %v", err)
+			// Don't fail the whole operation if vector indexing fails
+		}
+	}
+
 	return nil
 }
 

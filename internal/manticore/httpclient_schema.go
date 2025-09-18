@@ -124,20 +124,39 @@ func (c *manticoreHTTPClient) CreateSchema(aiConfig *models.AISearchConfig) erro
 	}
 
 	// Create unified documents table with Auto Embeddings using configurable model
+	// Correct syntax for Auto Embeddings in Manticore Search 13.11+ (all in CREATE TABLE)
 	createTableQuery := fmt.Sprintf(`
 		CREATE TABLE documents (
 			id BIGINT,
 			title TEXT,
 			content TEXT,
 			url TEXT,
-			embedding_field TEXT INDEXED ATTRIBUTE='{"model_name":"%s"}'
+			content_vector FLOAT_VECTOR KNN_TYPE='hnsw' HNSW_SIMILARITY='cosine' MODEL_NAME='%s' FROM='content'
 		) ENGINE='columnar'`, aiModel)
 
-	log.Printf("Executing schema creation query: %s", createTableQuery)
+	log.Printf("Executing schema creation query with Auto Embeddings: %s", createTableQuery)
 
 	if err := c.executeSQL(createTableQuery); err != nil {
 		log.Printf("Schema creation failed: %v", err)
 		return fmt.Errorf("failed to create documents table: %v", err)
+	}
+
+	log.Printf("Successfully created documents table with Auto Embeddings model: %s", aiModel)
+
+	// Create documents_vector table for traditional vector search (fallback)
+	vectorTableQuery := `
+		CREATE TABLE documents_vector (
+			id BIGINT,
+			title TEXT,
+			url TEXT,
+			vector_data TEXT
+		) ENGINE='columnar'`
+
+	log.Printf("Creating documents_vector table: %s", vectorTableQuery)
+
+	if err := c.executeSQL(vectorTableQuery); err != nil {
+		log.Printf("Vector table creation failed: %v", err)
+		return fmt.Errorf("failed to create documents_vector table: %v", err)
 	}
 
 	log.Println("Schema creation completed successfully with AI model:", aiModel)

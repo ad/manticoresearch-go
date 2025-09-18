@@ -1,6 +1,7 @@
 package vectorizer
 
 import (
+	"log"
 	"math"
 	"regexp"
 	"sort"
@@ -49,6 +50,8 @@ func (v *TFIDFVectorizer) preprocessText(text string) []string {
 
 // FitTransform builds vocabulary and calculates IDF from documents, then transforms them
 func (v *TFIDFVectorizer) FitTransform(documents []*models.Document) [][]float64 {
+	log.Printf("[TFIDF] Starting vectorization for %d documents", len(documents))
+
 	// Step 1: Build vocabulary from all documents
 	wordCounts := make(map[string]int)
 
@@ -71,13 +74,18 @@ func (v *TFIDFVectorizer) FitTransform(documents []*models.Document) [][]float64
 		}
 	}
 
-	// Build vocabulary (only keep words that appear in at least 2 documents)
+	// Build vocabulary (only keep words that appear in at least 1 document and are not too common)
 	var vocabWords []string
+	totalDocsFloat := float64(len(documents))
 	for word, count := range wordCounts {
-		if count >= 2 {
+		docFreq := float64(count) / totalDocsFloat
+		// Keep words that appear in at least 1 document but not in more than 95% of documents
+		if count >= 1 && docFreq <= 0.95 {
 			vocabWords = append(vocabWords, word)
 		}
 	}
+
+	log.Printf("[TFIDF] Built vocabulary: %d words from %d total unique words", len(vocabWords), len(wordCounts))
 
 	// Sort vocabulary for consistent indexing
 	sort.Strings(vocabWords)
@@ -102,6 +110,16 @@ func (v *TFIDFVectorizer) FitTransform(documents []*models.Document) [][]float64
 		vectors[i] = v.transformDocument(doc.Title + " " + doc.Content)
 	}
 
+	log.Printf("[TFIDF] Generated vectors: %d documents, each with %d dimensions", len(vectors), len(v.vocabulary))
+	if len(vectors) > 0 {
+		// Sample first few values of first vector for debugging
+		sampleSize := 5
+		if len(vectors[0]) < sampleSize {
+			sampleSize = len(vectors[0])
+		}
+		log.Printf("[TFIDF] Sample vector values (first %d): %v", sampleSize, vectors[0][:sampleSize])
+	}
+
 	return vectors
 }
 
@@ -118,11 +136,35 @@ func (v *TFIDFVectorizer) transformDocument(text string) []float64 {
 
 	// Calculate TF-IDF for each word in vocabulary
 	totalWords := float64(len(words))
+	nonZeroCount := 0
 	for word, index := range v.vocabulary {
 		tf := float64(termFreq[word]) / totalWords
 		if tf > 0 {
 			vector[index] = tf * v.idf[index]
+			nonZeroCount++
 		}
+	}
+
+	// Log if first document to debug
+	if len(v.documents) > 0 && len(text) > 0 && len(words) > 0 && nonZeroCount == 0 {
+		log.Printf("[TFIDF] [DEBUG] Document has %d words, vocabulary has %d words, but no matches found", len(words), len(v.vocabulary))
+		if len(words) > 0 {
+			sampleSize := 5
+			if len(words) < sampleSize {
+				sampleSize = len(words)
+			}
+			log.Printf("[TFIDF] [DEBUG] Sample words from document: %v", words[:sampleSize])
+		}
+		vocabSample := make([]string, 0, 5)
+		count := 0
+		for word := range v.vocabulary {
+			if count >= 5 {
+				break
+			}
+			vocabSample = append(vocabSample, word)
+			count++
+		}
+		log.Printf("[TFIDF] [DEBUG] Sample words from vocabulary: %v", vocabSample)
 	}
 
 	// Normalize vector (L2 normalization)

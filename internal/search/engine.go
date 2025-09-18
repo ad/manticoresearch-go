@@ -77,10 +77,10 @@ func (e *SearchEngine) FullTextSearch(query string, page, pageSize int) (*models
 
 // VectorSearch performs vector similarity search
 func (e *SearchEngine) VectorSearch(query string, page, pageSize int) (*models.SearchResponse, error) {
-	// Get all documents for vector computation
-	documents, err := e.getAllDocuments()
+	// Get all documents with pre-computed vectors from documents_vector table
+	documents, vectors, err := e.searchAdapter.GetAllDocumentsWithVectors()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get documents for vector search: %v", err)
+		return nil, fmt.Errorf("failed to get documents with vectors: %v", err)
 	}
 
 	if len(documents) == 0 {
@@ -92,19 +92,45 @@ func (e *SearchEngine) VectorSearch(query string, page, pageSize int) (*models.S
 		}, nil
 	}
 
-	// First we need to get vectors for all documents
-	// This is a simplified approach - in production we'd cache vectors
-	allVectors := e.vectorizer.FitTransform(documents)
+	// Vectorize query using same TF-IDF approach
+	queryVec := e.vectorizer.TransformQuery(query)
+	if len(queryVec) == 0 {
+		return &models.SearchResponse{
+			Documents: []models.SearchResult{},
+			Total:     0,
+			Page:      page,
+			Mode:      string(models.SearchModeVector),
+		}, nil
+	}
 
-	// Perform TF-IDF vector search using the global function
-	results := vectorizer.VectorSearch(query, documents, allVectors, e.vectorizer, pageSize)
+	// Calculate cosine similarity with pre-computed vectors
+	type docSimilarity struct {
+		document   *models.Document
+		similarity float64
+	}
+
+	similarities := make([]docSimilarity, 0, len(documents))
+	for i, doc := range documents {
+		if i < len(vectors) {
+			similarity := vectorizer.CosineSimilarity(queryVec, vectors[i])
+			similarities = append(similarities, docSimilarity{
+				document:   doc,
+				similarity: similarity,
+			})
+		}
+	}
+
+	// Sort by similarity (descending)
+	sort.Slice(similarities, func(i, j int) bool {
+		return similarities[i].similarity > similarities[j].similarity
+	})
 
 	// Convert to search results
-	searchResults := make([]models.SearchResult, 0, len(results))
-	for _, result := range results {
+	searchResults := make([]models.SearchResult, 0, len(similarities))
+	for _, sim := range similarities {
 		searchResults = append(searchResults, models.SearchResult{
-			Document: result.Document,
-			Score:    result.Similarity,
+			Document: sim.document,
+			Score:    sim.similarity,
 		})
 	}
 
@@ -121,7 +147,7 @@ func (e *SearchEngine) VectorSearch(query string, page, pageSize int) (*models.S
 
 	return &models.SearchResponse{
 		Documents: searchResults,
-		Total:     len(results),
+		Total:     len(similarities),
 		Page:      page,
 		Mode:      string(models.SearchModeVector),
 	}, nil

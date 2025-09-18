@@ -253,6 +253,41 @@ docker-compose down
 docker build -t manticore-search-tester .
 ```
 
+### GPU Acceleration (Optional)
+
+For improved Auto Embeddings performance, you can enable GPU acceleration:
+
+**Prerequisites:**
+- NVIDIA GPU with CUDA support
+- NVIDIA Docker runtime installed
+- `nvidia-container-toolkit` or `nvidia-docker2`
+
+**Automatic GPU Setup:**
+```bash
+# Auto-detect and enable GPU if available
+./scripts/gpu-setup.sh
+
+# Force GPU mode
+./scripts/gpu-setup.sh --force-gpu
+
+# Check GPU requirements
+./scripts/gpu-setup.sh --check
+```
+
+**Manual GPU Setup:**
+```bash
+# With GPU acceleration
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+
+# Without GPU (default)
+docker-compose up
+```
+
+**Performance Benefits:**
+- 2-10x faster vector generation for Auto Embeddings
+- Reduced CPU load during document indexing  
+- Better performance for large document sets (500+ documents)
+
 ## Development
 
 ### Hot Reload Development

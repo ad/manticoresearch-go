@@ -1,6 +1,6 @@
 services:
   manticore:
-    image: manticoresearch/manticore
+    image: manticoresearch/manticore:latest
     container_name: manticore-search
     ports:
       - "9306:9306"  # SQL port
@@ -9,6 +9,17 @@ services:
       - manticore_data:/var/lib/manticore
     environment:
       - EXTRA=1
+      # GPU optimization settings
+      - CUDA_VISIBLE_DEVICES=all
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    # GPU support (uncomment if GPU available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     # Network optimizations for stability
     sysctls:
       - net.core.somaxconn=1024
@@ -21,9 +32,13 @@ services:
       timeout: 10s   # Increased from 5s
       retries: 10    # Increased from 5
       start_period: 45s # Increased from 30s
+    networks:
+      - manticore-network
 
   web-service:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: manticore-web-service
     ports:
       - "8080:8080"
@@ -33,10 +48,27 @@ services:
     volumes:
       - ./data:/app/data:ro
     environment:
-      - MANTICORE_HOST=manticore:9308
+      - MANTICORE_HOST=manticore
+      - MANTICORE_PORT=9308
       - PORT=8080
       - DATA_DIR=/app/data
+      - MANTICORE_AI_ENABLED=true
+      - MANTICORE_AI_MODEL=sentence-transformers/all-MiniLM-L6-v2
+      - MANTICORE_AI_TIMEOUT=90s
+      - MANTICORE_HTTP_TIMEOUT=120s
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - manticore-network
+
+networks:
+  manticore-network:
+    driver: bridge
 
 volumes:
   manticore_data:

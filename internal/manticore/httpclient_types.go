@@ -26,6 +26,7 @@ type ClientInterface interface {
 	// Search operations (for ClientInterface compatibility)
 	Search(query string, mode models.SearchMode, page, pageSize int) (*models.SearchResponse, error)
 	GetAllDocuments() ([]*models.Document, error)
+	GetAllDocumentsWithVectors() ([]*models.Document, [][]float64, error)
 
 	// HTTP-specific search operations
 	SearchWithRequest(request SearchRequest) (*SearchResponse, error)
@@ -56,10 +57,10 @@ type BulkConfig struct {
 	BatchTimeout        time.Duration // Timeout for individual batch operations
 }
 
-// DefaultBulkConfig returns default bulk operation configuration
+// DefaultBulkConfig returns a default bulk configuration for performance
 func DefaultBulkConfig() BulkConfig {
 	return BulkConfig{
-		BatchSize:           100,
+		BatchSize:           5, // Reduced from 20 to 5 for Auto Embeddings compatibility
 		MaxConcurrentBatch:  3,
 		StreamingThreshold:  1000,
 		ProgressLogInterval: 500,

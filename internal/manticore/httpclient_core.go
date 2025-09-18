@@ -35,7 +35,7 @@ func NewHTTPClient(config HTTPClientConfig) ClientInterface {
 			KeepAlive: 60 * time.Second,
 		}).DialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
+		ResponseHeaderTimeout: 90 * time.Second, // Increased from 20s to 90s for Auto Embeddings operations
 		ExpectContinueTimeout: 2 * time.Second,
 		MaxIdleConns:          config.MaxIdleConns,
 		MaxIdleConnsPerHost:   config.MaxIdleConnsPerHost,

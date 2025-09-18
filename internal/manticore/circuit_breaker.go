@@ -56,13 +56,13 @@ type CircuitBreakerCallback interface {
 // DefaultCircuitBreakerConfig returns a default circuit breaker configuration
 func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	return CircuitBreakerConfig{
-		FailureThreshold:     10,
-		RecoveryTimeout:      30 * time.Second,
+		FailureThreshold:     20,               // Increased from 10 to 20 for Auto Embeddings tolerance
+		RecoveryTimeout:      60 * time.Second, // Increased from 30s to 60s for Auto Embeddings recovery
 		HalfOpenMaxCalls:     3,
 		SuccessThreshold:     2,
-		MinRequestThreshold:  5,
-		FailureRateThreshold: 0.5, // 50% failure rate
-		SlidingWindowSize:    20,
+		MinRequestThreshold:  10,  // Increased from 5 to 10 for more stability
+		FailureRateThreshold: 0.7, // Increased from 0.5 to 0.7 (70% failure rate before opening)
+		SlidingWindowSize:    30,  // Increased from 20 to 30 for better statistics
 		MonitoringInterval:   5 * time.Second,
 	}
 }

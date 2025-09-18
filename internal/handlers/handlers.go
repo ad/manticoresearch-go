@@ -134,7 +134,7 @@ func (app *AppState) SearchHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Handle AI search specific errors with fallback
 			if originalMode == models.SearchModeAI {
-				log.Printf("AI search failed, attempting fallback to hybrid search")
+				log.Printf("AI search failed, attempting fallback to vector search")
 
 				// Log AI search failure for monitoring
 				app.logAISearchOperation("AI_SEARCH_FAILURE", searchDuration, false, map[string]interface{}{
@@ -146,7 +146,7 @@ func (app *AppState) SearchHandler(w http.ResponseWriter, r *http.Request) {
 				})
 
 				fallbackStartTime := time.Now()
-				fallbackResult, fallbackErr := searchEngine.Search(query, models.SearchModeHybrid, page, limit)
+				fallbackResult, fallbackErr := searchEngine.Search(query, models.SearchModeVector, page, limit)
 				fallbackDuration := time.Since(fallbackStartTime)
 
 				if fallbackErr != nil {
@@ -167,7 +167,7 @@ func (app *AppState) SearchHandler(w http.ResponseWriter, r *http.Request) {
 				// Log successful fallback for monitoring
 				app.logAISearchOperation("AI_SEARCH_FALLBACK_SUCCESS", searchDuration+fallbackDuration, true, map[string]interface{}{
 					"query":            query,
-					"fallback_mode":    string(models.SearchModeHybrid),
+					"fallback_mode":    string(models.SearchModeVector),
 					"fallback_results": len(fallbackResult.Documents),
 					"ai_error":         err.Error(),
 					"total_duration":   searchDuration + fallbackDuration,

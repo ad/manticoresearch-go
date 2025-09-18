@@ -21,13 +21,19 @@ func NewClientFromEnvironment() (ClientInterface, error) {
 func LoadHTTPConfigFromEnvironment() (*HTTPClientConfig, error) {
 	// Get host configuration
 	host := os.Getenv("MANTICORE_HOST")
+	port := os.Getenv("MANTICORE_PORT")
+
 	if host == "" {
-		host = "localhost:9308"
+		host = "localhost"
+	}
+	if port == "" {
+		port = "9308"
 	}
 
-	config := DefaultHTTPConfig(host)
+	// Combine host and port
+	fullHost := fmt.Sprintf("%s:%s", host, port)
 
-	// Parse timeout configuration
+	config := DefaultHTTPConfig(fullHost) // Parse timeout configuration
 	if timeoutStr := os.Getenv("MANTICORE_HTTP_TIMEOUT"); timeoutStr != "" {
 		timeout, err := time.ParseDuration(timeoutStr)
 		if err != nil {

@@ -44,6 +44,11 @@ func (sa *SearchAdapter) GetAllDocuments() ([]*models.Document, error) {
 	return sa.client.GetAllDocuments()
 }
 
+// GetAllDocumentsWithVectors retrieves all documents with their vector data
+func (sa *SearchAdapter) GetAllDocumentsWithVectors() ([]*models.Document, [][]float64, error) {
+	return sa.client.GetAllDocumentsWithVectors()
+}
+
 // basicSearchHTTP performs basic search using the HTTP client
 func (sa *SearchAdapter) basicSearchHTTP(client *manticoreHTTPClient, query string, page, pageSize int) (*models.SearchResponse, error) {
 	log.Printf("BasicSearch (HTTP): query='%s', page=%d, pageSize=%d", query, page, pageSize)
